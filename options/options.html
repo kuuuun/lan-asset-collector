@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>素材采集器 · 设置</title>
+<link rel="stylesheet" href="options.css">
+</head>
+<body>
+<div class="page">
+
+  <header class="page-head">
+    <div class="brand">
+      <img src="../assets/icons/128.png" alt="">
+      <div>
+        <h1>素材采集器</h1>
+        <p>截图与网页图片采集 · 直接写入局域网共享目录</p>
+      </div>
+    </div>
+    <div class="head-actions">
+      <span class="pill" id="connPill"><i></i><span id="connText">检测中…</span></span>
+      <button class="btn" id="testBtn">测试连接</button>
+    </div>
+  </header>
+
+  <!-- ============ 保存位置 ============ -->
+  <section class="card">
+    <h2>保存位置</h2>
+    <p class="desc">浏览器无法直接写任意磁盘路径，下面两种方式任选其一，<strong>都不需要部署任何东西</strong>——群晖/NAS 自带的 WebDAV 服务就是现成的接收端。</p>
+
+    <div class="seg" id="modeSeg">
+      <label class="seg-item">
+        <input type="radio" name="mode" value="webdav">
+        <div>
+          <strong>WebDAV 直传 <span class="tag">零部署 · 推荐</span></strong>
+          <small>直接 PUT 到 NAS 的 WebDAV 服务（群晖默认 5005 端口）。不用装任何东西、不用开服务</small>
+        </div>
+      </label>
+      <label class="seg-item">
+        <input type="radio" name="mode" value="fsa">
+        <div>
+          <strong>浏览器目录授权</strong>
+          <small>授权一个本机目录（可指向已映射的网络驱动器，如 Z:\）。零部署，但依赖内核支持</small>
+        </div>
+      </label>
+    </div>
+
+    <!-- webdav -->
+    <div class="panel" data-panel="webdav">
+      <div class="field">
+        <label for="davUrl">WebDAV 目标地址（写到文件夹为止）</label>
+        <input type="text" id="davUrl" placeholder="http://192.168.31.206:5005/Works/PicStorage/clips">
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label for="davUser">NAS 账号</label>
+          <input type="text" id="davUser" placeholder="群晖 DSM 用户名" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="davPass">NAS 密码</label>
+          <input type="password" id="davPass" placeholder="仅保存在本机浏览器里" autocomplete="off">
+        </div>
+      </div>
+      <p class="tip">
+        地址末尾就是最终目录，子目录再由下面的「文件组织」模板追加。
+        群晖的 WebDAV 端口：<code>5005</code> 走 HTTP、<code>5006</code> 走 HTTPS；
+        若用 5006，自签证书会导致浏览器拒绝连接，除非证书已被信任。
+        建议在 DSM 里给这个用途单独建一个账号，只授予该共享文件夹的权限。
+      </p>
+      <p class="tip" id="davHint">
+        路径怎么确认：DSM →「套件中心」确认已装 <em>WebDAV Server</em>；在「控制面板 → 用户」里确认该账号有
+        <em>WebDAV</em> 应用的访问权限。填好后点右上角「测试连接」，它会真的试写一个文件再删掉。
+      </p>
+    </div>
+
+    <!-- fsa -->
+    <div class="panel" data-panel="fsa" hidden>
+      <div class="field">
+        <label>已授权目录</label>
+        <div class="row">
+          <code class="dirbox" id="dirName">未授权</code>
+          <button class="btn btn-primary" id="pickDir">选择目录…</button>
+          <button class="btn" id="clearDir">清除</button>
+        </div>
+      </div>
+      <p class="tip" id="fsaHint">
+        提示：网络共享请先在「此电脑」里映射一个盘符（例如 <code>Z:\</code>），再选中 <code>Z:\素材</code>。
+        授权后浏览器会询问是否允许长期访问，请选择「允许每次访问」。
+      </p>
+    </div>
+
+  </section>
+
+  <!-- ============ 文件组织 ============ -->
+  <section class="card">
+    <h2>文件组织</h2>
+    <div class="grid2">
+      <div class="field">
+        <label for="dirTemplate">子目录模板</label>
+        <input type="text" id="dirTemplate" placeholder="{yyyy}-{mm}-{dd}">
+      </div>
+      <div class="field">
+        <label for="nameTemplate">文件名模板</label>
+        <input type="text" id="nameTemplate" placeholder="{hh}{mi}{ss}-{page}-{n}">
+      </div>
+    </div>
+    <div class="tokens">
+      可用占位符：
+      <code>{yyyy}</code><code>{mm}</code><code>{dd}</code><code>{hh}</code><code>{mi}</code><code>{ss}</code>
+      <code>{page}</code><code>{host}</code><code>{type}</code><code>{n}</code><code>{w}</code><code>{h}</code><code>{rnd}</code>
+      <button class="link" id="resetTpl">恢复默认</button>
+    </div>
+    <div class="preview">
+      <span>预览</span>
+      <code id="preview">—</code>
+    </div>
+    <p class="tip">
+      <strong>存在哪个文件夹，只看「子目录模板」这一栏</strong>：填了内容就一定新建这个子目录（不存在会自动逐级创建），
+      <strong>留空则不再建子目录、图片直接落在目标目录里</strong>。
+      与「用哪个入口采集」（右键剪藏 / 区域 / 整页 / 批量）、什么网站、采几张都无关；「文件名模板」只决定文件名，不影响目录。
+      上面的「预览」就是最终相对路径。
+    </p>
+    <p class="tip"><code>{type}</code> 取值：<code>region</code> 区域 · <code>viewport</code> 可视区 · <code>fullpage</code> 整页 · <code>batch</code> 批量 · <code>single</code> 单图 · <code>video</code> 视频封面</p>
+  </section>
+
+  <!-- ============ 输出格式 ============ -->
+  <section class="card">
+    <h2>截图输出</h2>
+    <div class="grid2">
+      <div class="field">
+        <label for="format">格式</label>
+        <select id="format">
+          <option value="png">PNG（无损，推荐）</option>
+          <option value="jpeg">JPEG（体积小）</option>
+          <option value="webp">WebP（体积最小）</option>
+        </select>
+      </div>
+      <div class="field" id="qualityField">
+        <label for="quality">质量 <span id="qualityVal">92%</span></label>
+        <input type="range" id="quality" min="50" max="100" step="1">
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label for="fullPageMaxHeight">整页截图最大高度（CSS px）</label>
+        <input type="number" id="fullPageMaxHeight" min="1000" max="60000" step="1000">
+      </div>
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" id="fullPageDeviceScale">
+          <span>整页截图按设备像素比输出（更清晰，体积约翻倍）</span>
+        </label>
+      </div>
+    </div>
+    <p class="tip">注意：网页图片（批量 / 单图）始终保留原始文件格式与画质，不受这里影响。</p>
+  </section>
+
+  <!-- ============ 采集行为 ============ -->
+  <section class="card">
+    <h2>采集行为</h2>
+    <div class="checks">
+      <label class="check"><input type="checkbox" id="altRightClick"><span>Alt + 右键 直接采集该图片</span></label>
+      <label class="check"><input type="checkbox" id="skipDuplicate"><span>跳过重复图片（按内容 SHA-256 判断）</span></label>
+      <label class="check"><input type="checkbox" id="toastInPage"><span>在页面右下角显示操作提示</span></label>
+    </div>
+    <div class="field" style="max-width:280px">
+      <label for="minSize">图片最小边长过滤（px）</label>
+      <input type="number" id="minSize" min="0" max="2000" step="10">
+    </div>
+    <p class="tip">小于该边长的图片不会被批量采集选中，用于过滤图标、占位图。</p>
+  </section>
+
+  <!-- ============ 统计 ============ -->
+  <section class="card">
+    <h2>统计</h2>
+    <div class="stats" id="statsBox">
+      <div><b id="stCount">0</b><span>累计采集</span></div>
+      <div><b id="stBytes">0 B</b><span>累计体积</span></div>
+      <div><b id="stSkipped">0</b><span>重复跳过</span></div>
+      <div><b id="stFailed">0</b><span>失败</span></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="resetStats">清零统计</button>
+      <button class="btn" id="clearDedup">清空去重记录</button>
+      <button class="btn" id="exportCfg">导出配置</button>
+      <button class="btn" id="importCfg">导入配置</button>
+      <input type="file" id="importFile" accept="application/json" hidden>
+      <button class="btn danger" id="resetAll">恢复全部默认</button>
+    </div>
+  </section>
+
+  <!-- ============ 快捷键 ============ -->
+  <section class="card">
+    <h2>快捷键</h2>
+    <table class="keys">
+      <tr><td>批量采集本页图片</td><td><kbd>Ctrl</kbd>+<kbd>1</kbd></td></tr>
+      <tr><td>自定义区域截图</td><td><kbd>Ctrl</kbd>+<kbd>2</kbd></td></tr>
+      <tr><td>可视区域截图</td><td><kbd>Ctrl</kbd>+<kbd>3</kbd></td></tr>
+      <tr><td>整页滚动截图</td><td><kbd>Ctrl</kbd>+<kbd>4</kbd></td></tr>
+    </table>
+    <p class="tip">
+      Ctrl+数字 会被浏览器占用于切换标签页，因此<strong>面板打开时</strong>这些键在本插件内生效。
+      想在任意页面直接触发，请到扩展快捷键页面 <code>chrome://extensions/shortcuts</code>（或浏览器「扩展 → 键盘快捷键」）改成
+      <code>Ctrl+Shift+1..4</code> 之类的组合。
+    </p>
+  </section>
+
+  <footer class="page-foot">
+    <span id="saveState">修改会自动保存</span>
+  </footer>
+</div>
+<script src="../lib/util.js"></script>
+<script src="../lib/store.js"></script>
+<script src="../lib/webdav.js"></script>
+<script src="../lib/saver.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

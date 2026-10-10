@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>素材采集器 · 使用说明</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #f5f7fa; color: #1f2329;
+    font: 14px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .page { max-width: 820px; margin: 0 auto; padding: 36px 24px 90px; }
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 26px; }
+  header img { width: 54px; height: 54px; border-radius: 13px; }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  header p { margin: 2px 0 0; color: #6b7885; font-size: 13px; }
+  .card {
+    background: #fff; border: 1px solid #e6eaf0; border-radius: 14px;
+    padding: 22px 24px; margin-bottom: 16px;
+  }
+  h2 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
+  h3 { margin: 20px 0 8px; font-size: 13.5px; font-weight: 600; color: #334155; }
+  h4 { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: #475569; }
+  h2 .n {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 6px; background: #3b82f6; color: #fff;
+    font-size: 12px; margin-right: 9px; vertical-align: 2px;
+  }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+  }
+  code { background: #f2f5f9; border: 1px solid #e8edf3; border-radius: 5px; padding: 1.5px 6px; color: #334155; }
+  pre {
+    background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 14px 16px;
+    overflow-x: auto; line-height: 1.65; margin: 10px 0;
+  }
+  pre code { background: none; border: 0; color: inherit; padding: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eef2f7; }
+  th { color: #6b7885; font-weight: 500; font-size: 12px; background: #fafbfc; }
+  kbd {
+    font-family: ui-monospace, monospace; font-size: 11.5px; background: #f4f7fa;
+    border: 1px solid #e6ebf1; border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; color: #475569;
+  }
+  .note {
+    background: #f5f9ff; border: 1px solid #d8e6ff; border-left: 3px solid #3b82f6;
+    border-radius: 9px; padding: 11px 15px; margin: 12px 0; font-size: 13px;
+  }
+  .warn {
+    background: #fffbf3; border: 1px solid #f5e3c0; border-left: 3px solid #f59e0b;
+    border-radius: 9px; padding: 11px 15px; margin: 12px 0; font-size: 13px;
+  }
+  .tag {
+    display: inline-block; font-size: 11.5px; padding: 1px 8px; border-radius: 999px;
+    background: #eef4ff; color: #2563eb; margin-left: 6px; vertical-align: 1px;
+  }
+  .tag.gray { background: #f1f5f9; color: #64748b; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <img src="../assets/icons/128.png" alt="">
+    <div>
+      <h1>素材采集器 · LAN Collector 使用说明</h1>
+      <p>截图与网页图片采集，直接写入局域网共享文件夹</p>
+    </div>
+  </header>
+
+  <div class="card" id="first" hidden>
+    <h2>装好了，两步开始用</h2>
+    <ol>
+      <li>打开设置页 → 保存位置选「<strong>WebDAV 直传</strong>」，填上 NAS 账号密码，点「测试连接」看到绿灯（第 1 节）；</li>
+      <li>在任意网页的<strong>图片上点右键</strong> →「将图片保存至 LAN Collector」，这张图就存好了。</li>
+    </ol>
+    <div class="note">WebDAV <strong>不需要部署任何东西</strong> —— NAS 自带的 WebDAV 服务就是接收端。若环境里没有 WebDAV，也可以改用「浏览器目录授权」。</div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">1</span>两种落盘方式</h2>
+    <p>浏览器扩展无法直接往任意磁盘路径写文件，所以要在下面两种里选一种。设置页右上角「测试连接」会做真实探测。</p>
+
+    <h3>WebDAV 直传 <span class="tag">推荐 · 零部署</span></h3>
+    <p><strong>什么都不用装。</strong>群晖 / 威联通这类 NAS 大多自带 WebDAV 服务，装上它就等于有了现成的接收端。</p>
+    <pre><code>目标地址   http://192.168.31.206:5005/Works/PicStorage/clips
+NAS 账号   你的群晖 DSM 用户名
+NAS 密码   只存在本机浏览器里</code></pre>
+    <ul>
+      <li>群晖端口：<code>5005</code> 走 HTTP，<code>5006</code> 走 HTTPS。用 5006 的话自签证书会让浏览器直接拒绝连接，除非证书已被信任</li>
+      <li>DSM →「套件中心」确认已安装 <em>WebDAV Server</em>；「控制面板 → 用户 → 应用程序」里允许该账号使用 WebDAV</li>
+      <li>建议单独建一个账号，只给目标共享文件夹的权限，别用管理员</li>
+      <li>地址末尾就是最终目录，日期子目录由设置页的「文件组织」模板追加</li>
+    </ul>
+    <div class="note">扩展会逐级 <code>MKCOL</code> 自动建目录，并用条件请求保护同名文件 —— 同名不会被静默覆盖，而是自动加 <code>-1</code>、<code>-2</code>。</div>
+
+    <h3>浏览器目录授权 <span class="tag gray">零部署 · 依赖内核</span></h3>
+    <p>在设置页点「选择目录…」授权一个目录即可，可以是映射过的网络驱动器。
+      Windows 上本机 <code>Z:</code> 正好映射到 <code>\\192.168.31.206\Works</code>，所以选 <code>Z:\PicStorage\clips</code> 与上面的 WebDAV 是同一个落点；
+      macOS 上先在访达里 <code>Cmd+K</code> 挂载 <code>smb://192.168.31.206/Works</code>，再选 <code>/Volumes/Works/PicStorage/clips</code>。</p>
+    <div class="warn">这条依赖 File System Access API。部分国产内核阉割了该能力，且 Chromium 对网络驱动器的支持历来不稳，所以作为备用而非首选。</div>
+
+  </div>
+
+  <div class="card">
+    <h2><span class="n">2</span>配置扩展</h2>
+    <p>右键扩展图标 →「选项」，或点面板里的「设置」。</p>
+    <h3>方式 A：WebDAV 直传 <span class="tag">推荐</span></h3>
+    <ul>
+      <li><strong>目标地址</strong>：写到文件夹为止，例如 <code>http://192.168.31.206:5005/Works/PicStorage/clips</code></li>
+      <li><strong>NAS 账号 / 密码</strong>：群晖 DSM 账号；不填的话无法写入</li>
+    </ul>
+    <div class="note">填完点右上角「测试连接」，它会真的往目标目录写一个文件再删掉。绿灯说明连接、鉴权、写入都通了。</div>
+
+    <h3>方式 B：浏览器目录授权 <span class="tag gray">零部署 · 依赖内核</span></h3>
+    <ul>
+      <li>先在「此电脑」里把网络共享映射成盘符，例如 <code>Z:\</code>（本机 <code>Z:</code> 已是 <code>\\192.168.31.206\Works</code>）</li>
+      <li>设置页点「选择目录…」，选中 <code>Z:\PicStorage\clips</code></li>
+      <li>浏览器询问权限时选「允许每次访问」，否则重启浏览器后需要重新授权</li>
+    </ul>
+    <div class="warn">
+      依赖浏览器的 File System Access 接口。部分国产内核阉割了该能力，在网络驱动器上也可能失败，遇到问题请用方式 A。
+    </div>
+
+    <h3>文件组织</h3>
+    <p>用模板控制存到哪个子目录、文件名长什么样：</p>
+    <table>
+      <tr><th>占位符</th><th>含义</th></tr>
+      <tr><td><code>{yyyy} {mm} {dd}</code></td><td>年 / 月 / 日</td></tr>
+      <tr><td><code>{hh} {mi} {ss}</code></td><td>时 / 分 / 秒</td></tr>
+      <tr><td><code>{page}</code></td><td>网页标题（已清掉非法字符）</td></tr>
+      <tr><td><code>{host}</code></td><td>网站域名</td></tr>
+      <tr><td><code>{type}</code></td><td>region / viewport / fullpage / batch / single / video</td></tr>
+      <tr><td><code>{n}</code></td><td>递增序号</td></tr>
+      <tr><td><code>{w} {h}</code></td><td>图片宽高</td></tr>
+      <tr><td><code>{rnd}</code></td><td>随机串</td></tr>
+    </table>
+    <p>默认是 <code>{yyyy}-{mm}-{dd}/{hh}{mi}{ss}-{page}-{n}.png</code>，按天分目录，一眼能看出是什么时候从哪采的。</p>
+
+    <h4>什么时候存进子文件夹，什么时候不存？</h4>
+    <p><strong>只看「子目录模板」这一栏，跟别的都无关。</strong>最终路径永远是这个式子：</p>
+    <p><code>目标目录</code> + <code>子目录模板渲染结果</code> + <code>/</code> + <code>文件名模板渲染结果</code></p>
+    <table>
+      <tr><th>子目录模板</th><th>结果</th></tr>
+      <tr><td>填了内容（默认 <code>{yyyy}-{mm}-{dd}</code>）</td><td><strong>存进子文件夹</strong>：<code>clips/2026-10-10/143208-设计参考-1.png</code></td></tr>
+      <tr><td><strong>留空</strong></td><td><strong>不建子文件夹</strong>：<code>clips/143208-设计参考-1.png</code></td></tr>
+    </table>
+    <ul>
+      <li><strong>与采集入口无关</strong>：右键剪藏单图、区域 / 可视区 / 整页截图、批量采集、视频封面 —— 走的是同一套规则，落在同一个地方</li>
+      <li><strong>与网站、图片数量、文件格式无关</strong>，不会出现「有的进文件夹、有的不进」</li>
+      <li><strong>子目录不用手工建</strong>：WebDAV 会逐级 <code>MKCOL</code>，目录授权会逐级创建；已存在也算成功</li>
+      <li><strong>文件名模板只决定文件名</strong>，不影响目录层级（把 <code>{page}</code> 写进文件名模板不会多出文件夹）</li>
+      <li>把 <code>{page}</code> / <code>{host}</code> 写进<strong>子目录模板</strong>才会按页面 / 站点分文件夹，例如 <code>{host}</code> → <code>clips/example.com/…</code></li>
+      <li>设置页「文件组织」下方有一行<strong>预览</strong>，显示的就是当前模板算出来的相对路径，改完模板立刻能看到</li>
+      <li>留空后在 NAS 上看着「没进文件夹」，是因为文件真的直接落在目标目录（<code>Works/PicStorage/clips</code>）里了，不是丢到了别处</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">3</span>五种采集方式</h2>
+    <table>
+      <tr><th>功能</th><th>说明</th><th>快捷键</th></tr>
+      <tr><td>一键剪藏单图</td><td>在<strong>图片上右键</strong> →「将图片保存至 LAN Collector」，点一下即存，形态与 Billfish 采集扩展一致</td><td>—</td></tr>
+      <tr><td>Alt + 右键采集</td><td>在图片上按住 <kbd>Alt</kbd> 右键，直接采集这张图，不弹浏览器菜单</td><td><kbd>Alt</kbd>+右键</td></tr>
+      <tr><td>自定义区域截图</td><td>拖拽框选，松手即存</td><td><kbd>Ctrl</kbd>+<kbd>2</kbd></td></tr>
+      <tr><td>可视区域截图</td><td>当前屏幕可见范围</td><td><kbd>Ctrl</kbd>+<kbd>3</kbd></td></tr>
+      <tr><td>整页滚动截图</td><td>自动滚动拼接完整长图</td><td><kbd>Ctrl</kbd>+<kbd>4</kbd></td></tr>
+      <tr><td>批量采集</td><td>列出页面全部图片，勾选后批量下载原图</td><td><kbd>Ctrl</kbd>+<kbd>1</kbd></td></tr>
+    </table>
+    <div class="note">
+      快捷键说明：<kbd>Ctrl</kbd>+数字 会被浏览器用于切换标签页，所以在<strong>面板打开时</strong>才在本插件内生效。
+      想在任何页面直接触发，去浏览器「扩展 → 键盘快捷键」（<code>chrome://extensions/shortcuts</code>）改成 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>1..4</kbd>。
+    </div>
+    <p>右键菜单里<strong>只有「将图片保存至 LAN Collector」这一项</strong>，只在图片上出现 —— 菜单项一多，Chromium 会把它们
+      自动折叠成「素材采集器 ›」二级菜单，一键剪藏就变成两次点击了。其余四个入口在扩展面板与快捷键里。</p>
+    <div class="note">v1.5.5 起<strong>已移除「鼠标悬停时浮现采集按钮」</strong>：它在每个含图片的页面上都会常驻一组
+      全局监听器与一个浮动层，收益不大却一直跟着你浏览。单图采集请用上面两条 —— 图片上右键一键剪藏，或
+      <kbd>Alt</kbd>+右键。</div>
+    <div class="note">菜单项前面那个图标就是扩展自己的图标（照片卡 + 下落箭头）。浏览器的右键菜单接口
+      <strong>不支持给单个菜单项单独配图</strong>，显示的一律取自扩展图标本身 —— 所以「换菜单图标」＝ 换
+      <code>assets/icons/</code>，改完刷新扩展即可。</div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">4</span>常见问题</h2>
+
+    <h3>连接失败 / 上传超时</h3>
+    <p style="margin-top:2px"><strong>WebDAV（方式 A）：</strong></p>
+    <ul>
+      <li>报「账号或密码不正确」：核对 DSM 账号密码；注意这是 NAS 登录密码，不是 SMB 里另设的共享密码</li>
+      <li>报「该账号没有此目录的 WebDAV 权限」：DSM →「控制面板 → 用户 → 应用程序」里勾上 WebDAV</li>
+      <li>报「路径不存在」：地址里的共享文件夹名写错了。群晖的 WebDAV 路径是 <code>/共享名/子目录</code>，区分大小写</li>
+      <li>报「无法连接」：确认端口（群晖 5005 / 5006）与网络可通</li>
+    </ul>
+    <h3>右键菜单里只有一项，找不到区域截图</h3>
+    <p>这是刻意的。右键菜单只保留「将图片保存至 LAN Collector」这一个一键动作（与 Billfish 采集扩展一致）——
+      同一扩展注册多项时，Chromium 会把它们折叠成一个「素材采集器 ›」二级菜单，一键剪藏就变成了两次点击。
+      区域截图 / 可视区截图 / 整页截图 / 批量采集都在扩展面板里，也都有快捷键。</p>
+
+    <h3>改了菜单名字 / 图标，右键里还是旧的</h3>
+    <ul>
+      <li>右键菜单由浏览器进程持有，后台脚本休眠不会让它消失。改了代码后要让后台重新跑一遍才会重建 ——
+        <strong>打开一次扩展面板</strong>（点工具栏图标）就会自动重建一次，不必专门跑扩展管理页；
+        想显式触发就点面板底部那行右边的「重新注册」</li>
+      <li>刷新后仍不生效，就「移除」扩展、再「加载已解压的扩展程序」重新选一次目录；
+        同时确认选中的就是本目录，而不是早先解压在别处的旧副本</li>
+      <li>自检：把鼠标悬停在工具栏图标上，悬浮提示里带版本号（形如「素材采集器 1.5.7 · …」）——
+        版本号对得上，说明浏览器跑的就是这份代码</li>
+    </ul>
+
+    <h3>卸载 / 删掉别的扩展之后，右键里的这一项不见了</h3>
+    <p>本插件的右键项与其它扩展（例如 Billfish 采集扩展）<strong>完全独立</strong>，删掉谁都不会连带删掉对方。
+      但这个菜单项由浏览器进程持有，而 Chromium 在<strong>扩展集合发生变化时</strong>
+      （安装 / 卸载 / 禁用任意一个扩展）会重建整张右键菜单 —— 重建那一刻本插件的后台脚本若正在休眠，
+      这一项就会缺席，直到后台被唤醒才会补回来。看起来就像「删掉 Billfish 之后功能没了」。</p>
+    <ul>
+      <li>当前版本已加兜底：<strong>切换一次标签页</strong>就会让后台脚本醒来并自动重建菜单</li>
+      <li>也可以手动唤醒：在扩展管理页点一次「刷新」，或点开一次扩展面板</li>
+      <li>自检：打开扩展面板，最下面一行会显示「图片右键菜单已就绪」；
+        若显示未注册，点它右边的「重新注册」即可</li>
+      <li>另外注意：菜单项<strong>只在右键点在图片上时出现</strong>（背景图、canvas、视频封面不算），点在空白处或文字上本来就没有它</li>
+    </ul>
+
+    <h3>扩展管理页里出现错误 / 红字</h3>
+    <ul>
+      <li><strong>先看版本号对不对</strong>：卡片上的版本和工具栏图标悬浮提示里的版本一致，才说明浏览器跑的是这份代码。
+        错误列表<strong>跨版本累积</strong>，重载/刷新扩展都不会自动清空它</li>
+      <li>点错误列表右上角的「<strong>全部清除</strong>」，再照出问题的操作重新触发一次 ——
+        清掉后不再出现的就是历史记录，不必管</li>
+      <li>已知会在这里报错的问题都已修掉：帮助页的内联脚本违反内容安全策略、
+        批量保存没有标签页时抛异常、以及一批 Promise 形式的浏览器接口调用没接住失败</li>
+      <li>从 1.5.6 起，后台与自己这两个页面都装了兜底网：万一还有漏网的异步错误，
+        只会写进开发者控制台（<code>console.warn</code>），不再往错误列表里冒</li>
+      <li>若清理后仍会重新出现，把那一行展开后的「上下文」与「叠加追踪」反馈过来</li>
+    </ul>
+
+    <h3>右键剪藏报「图片抓取失败」</h3>
+    <ul>
+      <li>扩展会先直接抓原图，失败后再回页面里带页面自身的 Cookie / Referer 重试一次。两次都失败才会报错</li>
+      <li>常见原因是该图需要登录态或已过期的一次性签名地址 —— 刷新页面后重新右键即可</li>
+      <li>页面内的 <code>blob:</code> 图片会自动改由页面读取，无需额外操作</li>
+    </ul>
+
+    <h3>批量采集有些图没采到</h3>
+    <ul>
+      <li>图片是 CDN 带防盗链的，两次尝试都取不到原图。这种会记为「失败」</li>
+      <li>懒加载图片需要先把页面滚一遍，让它真正加载出来</li>
+      <li>用「最小边长」过滤掉小图标</li>
+    </ul>
+
+    <h3>整页截图缺一块 / 有重复的导航栏</h3>
+    <ul>
+      <li>采集时会自动隐藏 <code>position:fixed / sticky</code> 的元素，若页面用其他方式固定会残留</li>
+      <li>懒加载很重的页面建议先手动滚一遍到底部，再触发整页截图</li>
+      <li>页面特别长时可在设置里调整「整页截图最大高度」</li>
+    </ul>
+
+    <h3>同一张图被反复保存</h3>
+    <p>打开设置里的「跳过重复图片」，按内容 SHA-256 判断，重复的直接跳过。想重来可以在设置页点「清空去重记录」。</p>
+
+    <h3>截图存的是网页图片的原始格式吗？</h3>
+    <p>是。批量采集和单图采集保存的都是<strong>原始文件</strong>，不做任何重编码。只有截图（区域 / 可视区 / 整页）会按设置里的格式输出。</p>
+  </div>
+
+  <div class="card">
+    <h2>隐私说明</h2>
+    <p>所有数据只写到你自己配置的目录，不经过任何第三方服务器。扩展需要「读取所有网站数据」的权限用于抓取页面图片和截屏，这是这类工具的必要权限。</p>
+    <p>WebDAV 模式下，NAS 账号密码只存在本机扩展的存储里，仅在向该 NAS 发请求时用于 Basic 鉴权。写入路径由模板生成且经过清洗，<code>..</code> 与路径分隔符会被剥离。建议单独建一个只对该共享文件夹有权限的 NAS 账号。</p>
+    <p>扩展不开任何本地监听端口，也不接受来自网页的连接，因此没有可被外部写入的入口。写入路径由模板生成且经过清洗，<code>..</code> 与路径分隔符会被剥离。</p>
+    <p style="color:#6b7885;font-size:12.5px">版本 1.5.7 · 两条落盘通道：WebDAV 直传 / 目录授权 · Windows 与 macOS 同一份代码</p>
+  </div>
+
+</div>
+<script src="help.js"></script>
+</body>
+</html>

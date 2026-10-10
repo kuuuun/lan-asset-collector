@@ -1,0 +1,368 @@
+# 交接说明 · 素材采集器（LAN Collector）
+
+> 交接对象：接手维护这个扩展的开发者。
+> 当前版本 **v1.5.7**，交接日期 **2026-10-10**。
+> 这份文件只讲「怎么接手、别踩哪些坑」，功能怎么用看 [README.md](README.md)。
+
+---
+
+## 一、一页速览
+
+| 项 | 内容 |
+|---|---|
+| 是什么 | Chromium 内核浏览器扩展（MV3），仿 Billfish 采集器的采集动作，但**不写入任何素材库软件**，直接把截图 / 网页图片落进局域网目录 |
+| 干什么用 | 图片右键一键剪藏、区域截图、可视区截图、整页滚动截图、批量采集 → 直接存到群晖 NAS |
+| 落盘通道 | 默认 **WebDAV 直传**（零部署，NAS 自带 5005 端口就是服务端）；备用 **浏览器目录授权**（FSA） |
+| 目标目录 | `http://192.168.31.206:5005/Works/PicStorage/clips`（群晖 DSM，本机映射为 `Z:\PicStorage\clips`） |
+| 代码量 | 扩展本体 ~2,800 行（JS/CSS/HTML），验证脚本 ~1,500 行（`dev-tests/`，不打包） |
+| 依赖 | **运行时零依赖**（没有 npm、没有构建步骤）；开发期验证需要 Node + 可选 Python/wsgidav |
+| 目标浏览器 | 夸克（K 的主力）、Chrome、Edge —— 同一份代码，无平台分支 |
+| 交付物 | `python tools/package.py` → 上一级目录的 `lan-asset-collector-v<版本>.zip` |
+
+**一句话现状**：功能完整、四套验证闸门全绿；**已在 Edge 无头模式真机跑通端到端采集**，
+但**从未在真实 macOS 上跑过**，**也从没能程序化验证夸克右键菜单的实际呈现**（原因见第五节）。
+
+---
+
+## 二、5 分钟跑起来
+
+```bash
+# 1. 直接加载（无需构建）
+#    浏览器打开 chrome://extensions（夸克：quark://extensions）
+#    右上角打开「开发者模式」→「加载已解压的扩展程序」→ 选本目录
+#    注意：选本目录本身，不要选它的上一级
+
+# 2. 配置落盘目标：点扩展图标 →「设置」→ 填 NAS 账号密码
+#    然后点弹窗里的状态胶囊「测试连接」，绿灯＝真的能写（会往目标目录试写一个文件再删掉）
+
+# 3. 验一把
+#    在任意网页的图片上右键 →「将图片保存至 LAN Collector」
+#    去 NAS 看 clips/ 下有没有落文件
+```
+
+**改完代码怎么生效**：扩展管理页点「刷新」（🔄）。注意两个副作用 ——
+① 右键菜单标题/形态的改动**必须刷新后重开一次面板**才可见（原因见第五节第 2 条）；
+② 若做过「移除 + 重新加载」，`chrome.storage.local` 会被清空，**NAS 账号密码要重填一次**。
+
+---
+
+## 三、代码地图
+
+```
+manifest.json          MV3 清单。权限：tabs / activeTab / scripting / storage /
+                       contextMenus / notifications + <all_urls> host 权限
+background.js  (790)   service worker：菜单注册、快捷键、截屏编排、整页拼接调度、消息总线
+lib/util.js    (285)   模板渲染 + 路径清洗（三平台并集规则）+ 哈希 + 各类解析
+lib/store.js   (184)   设置读写（chrome.storage.local）+ IndexedDB（目录句柄/去重指纹/序号）
+lib/webdav.js  (230)   WebDAV 客户端：探测 / 逐级 MKCOL / PUT（含同名保护）
+lib/saver.js   (211)   保存层：通道分发（webdav / fsa）+ 目标校验 + 取图
+lib/imageproc.js(118)  页面内 Canvas 处理：裁剪 / 格式转换 / 整页拼接（跑在内容脚本里）
+content/content.js(720) 区域选框、Alt+右键、批量面板、整页滚屏与拼接、页内提示
+popup/         功能面板（对齐 Billfish 布局，含右键菜单状态自检行）
+options/       设置页
+help/          使用说明页
+assets/icons/  16/32/48/128 图标，由 tools/make_icons.py 生成
+tools/         make_icons.py（纯标准库生成 PNG）、package.py（校验 + 打包）
+dev-tests/     四套验证脚本，永不打包
+```
+
+### 关键函数索引
+
+| 位置 | 函数 | 作用 |
+|---|---|---|
+| `background.js` | `buildMenus()` | **单步**注册右键菜单（create → 已存在则 update），顶层调用 |
+| | `fetchForClip(tab, url)` | 剪藏的**三层取图兜底**：`data:` 直接解码 / `blob:` 交内容脚本 / `http(s)` 先后台抓、失败回页面带 Cookie+Referer 重试 |
+| | `singleSave` / `batchSave` | 单图 / 批量落盘入口 |
+| | `captureRegion` / `captureViewport` / `captureFullPage` | 三种截屏编排 |
+| | `persist(tab, dataUrl, type, extra)` | 统一的「转码 → 命名 → 写盘 → 计数 → 通知」出口 |
+| | `silent(p)` | 包住 Promise 形式的 `chrome.*` 调用（**try/catch 抓不住 Promise 拒绝**，见第五节） |
+| `lib/util.js` | `CC.cleanSeg` / `CC.cleanDirSeg` | **文件名段**（空则兜底 `untitled`）vs **目录段**（空则丢弃）—— 语义不同，别合并 |
+| | `CC.sanitizeRelPath(p)` | 把模板算出的相对路径逐段清洗 |
+| | `CC.sliceBytes` / `CC.utf8Len` | 按 **UTF-8 字节** 截断（NAS 上是 255 字节上限，不是字符） |
+| `lib/saver.js` | `CC.saveAsset(asset)` | 唯一落盘入口，按 `settings.mode` 分发到 webdav / fsa |
+| `lib/store.js` | `CC.getSettings` / `CC.setSettings` | 读写设置；`normalizeMode()` 会把老配置里的 http 通道自动迁到 `webdav` |
+
+### 一次「右键剪藏」的调用链
+
+```
+contextMenus.onClicked ('cc-image')
+  → singleSave(tab, { url: info.srcUrl, w, h })
+    → fetchForClip()  ─┬─ data:  → 本地解码
+                       ├─ blob:  → sendMessage('cc:image:fetch') 给内容脚本
+                       └─ http(s)→ 后台 fetch；失败 → 内容脚本带页面凭证重试
+    → maybeConvert()  → 按设置决定是否转码
+    → CC.saveAsset()  → CC.checkTarget() 校验目标
+                      → buildTarget()  渲染 dirTemplate / nameTemplate 得相对路径
+                      → webdav: webdavProbe → MKCOL → PUT(If-None-Match: *)
+                        fsa:    getDirectoryHandle({create:true}) → createWritable
+    → bumpStats() / rememberHash() / reportSave()  计数、去重指纹、页内提示 + 通知
+```
+
+---
+
+## 四、不可动摇的设计决定（改之前先读这一节）
+
+这一节是这份交接文件里最值钱的部分 —— 每一条都是**踩过坑之后才定下来的**，
+按「直觉」改回去就会重现对应的 bug。
+
+### 1. 右键菜单只能有 **1 项**，不要加第二个
+
+Chromium 官方行为：同一扩展注册**多个顶层菜单项**时会被**自动折叠成一个「扩展名 ›」二级菜单**，
+一键剪藏就从「一次点击」变成「两次点击」。所以：
+
+- 菜单里只留 `cc-image` 一项（`contexts: ['image']`），标题「将图片保存至 LAN Collector」
+- 其它功能（区域 / 可视区 / 整页 / 批量）放**弹窗面板 + 快捷键**，不进右键菜单
+- 闸门守着：`platform_check.mjs` C 段断言 `createdMenus.length === 1` 且无 `parentId`
+
+### 2. 菜单注册必须是「**单步**」，永远不要 `removeAll` + `create`
+
+这是 v1.5.7 才修掉的真 bug，也是 K 反复报「右键里没有存单张图片这一项」的根因：
+
+- 老写法 `removeAll(cb → create)` 是**先清空、再重建两步**。`removeAll` 发出之后若 SW 被回收
+  （夸克这类内核回收更勤），菜单就被清空而新的没建上 —— 全程存在一个「菜单是空的」窗口
+- 现在：`create` → 报「重复 id」就 `update({ title, contexts })` 覆盖。**任何时刻菜单都是完整的**
+- 闸门用 `/contextMenus\s*\.\s*removeAll\s*\(/` 匹配 —— 只能匹配**调用形式**，
+  因为注释里会正当地提到这个名字，只搜字符串会假红
+
+### 3. 注册点放在 service worker **顶层**，不要只挂在生命周期事件里
+
+- `contextMenus` 菜单由**浏览器进程**持有，SW 回收**不会**让菜单消失
+- 而「扩展管理页点刷新」**既不触发 `onInstalled`**（只在安装/升级来）**也不触发 `onStartup`**
+  （只在浏览器启动来）→ 只挂这两个事件的话，改了标题刷新扩展后右键永远显示旧标题
+- MV3 的顶层脚本每次唤醒都重跑，`create`/`update` 幂等，所以顶层调一次即覆盖全部路径
+- **兜底唤醒点**：`tabs.onActivated` + `windows.onFocusChanged` → `buildMenus()`。
+  因为 Chromium 在**扩展集合发生变化**时（安装 / 卸载 / 禁用任意一个扩展）会重建整张菜单，
+  重建那一刻本扩展 SW 若在休眠，这一项就缺席
+- **不要改用 `chrome.alarms`**：要多申请 `alarms` 权限，给已加载的未打包扩展新增权限
+  会触发重新授权，代价大于收益
+
+### 4. 所有 Promise 形式的 `chrome.*` 调用都必须接住失败
+
+`try/catch` **抓不住 Promise 拒绝**。`chrome.notifications.create`、`chrome.action.setBadgeText`、
+`setBadgeBackgroundColor`、`setTitle`、`chrome.tabs.create`、`chrome.runtime.openOptionsPage`
+在**不给回调**时都返回 Promise，失败是「拒绝」不是「抛出」→ 外面包着 try/catch 也照漏，
+直接变成扩展管理页错误列表里的 `Uncaught (in promise) …`，使用者会认为「插件坏了」。
+
+- 后台统一用 `silent(promise)`（内部 `p.catch(() => {})`），页面用 `fire(...)`
+- 三个页面（后台 / 弹窗 / 设置）都装了 `unhandledrejection` + `error` 兜底网，
+  漏网的只写 `console.warn`，不再往错误列表冒
+- 闸门：`platform_check.mjs` D 段「`chrome.*` 的 Promise 调用都接住了失败」
+
+### 5. 跨上下文的消息封装**一律 resolve 成对象**
+
+`popup.js` 的 `send()` 写成 `resolve(err ? { error } : (res == null ? {} : res))` ——
+后台被回收时 `res` 是 `undefined`，调用方紧接着取 `.stats` / `.version` 就会抛
+「Uncaught (in promise)」。同理 `content.js` 的 `bg()`。
+
+**并且**后台 `onMessage` 的 `default` 分支必须明确回 `{ ok: false, error: '未知指令' }`，
+不能 `return` 了事 —— 那会让调用方收到「The message port closed before a response was received.」。
+
+### 6. HTML 页面禁止内联 `<script>` 与 `onclick=`
+
+MV3 默认 CSP 是 `script-src 'self'`，内联脚本违反它，只要打开过该页面就留一条 CSP 违规。
+`help/help.html` 曾因此潜伏很久，已抽成 `help/help.js`。内联 `<style>` / `style=` 不受影响。
+
+### 7. 目录段与文件名段的「空值语义」不同
+
+- `CC.cleanSeg()`（**文件名**）：清完是空 → 兜底成 `untitled`（文件总得有个名字）
+- `CC.cleanDirSeg()`（**目录**）：整段没有任何字母/数字（判据 `/[\p{L}\p{N}]/u`）→ **丢弃**
+
+合并这两个函数会重现 v1.5.4 的 bug：子目录模板留空时凭空多出一个 `untitled/` 文件夹。
+
+### 8. 悬停采集**已整条下线**，不要写回来
+
+K 明确要求「不要鼠标悬停采集」。原来它会在**每个含图片的页面**上挂三个 `capture: true`
+的全局监听器 + 一个浮动层，对浏览性能是持续的负担。
+单图采集只剩两条路：**图片上右键一键剪藏**、**`Alt`+右键**。
+`minSize` 仍有效，但只作用于批量采集面板。D 段有两条残骸闸门守着。
+
+---
+
+## 五、关于夸克浏览器：一条必须先讲清的前提
+
+**夸克 v6.10+ 会「自绘」右键菜单覆盖原生菜单。** 由 `context_menu_injector.js` 在
+`documentElement` 上挂 `mousedown + contextmenu` 组合监听实现，**运行在浏览器进程**，
+层级高到网页里的 `event.preventDefault()` 在冒泡/捕获阶段都可能失效。
+
+由此推出两条结论，接手后请记住：
+
+1. **扩展的 `contextMenus` 项能否显示，受这套自绘菜单支配，不是纯 Chromium 标准行为。**
+   所以「弹窗显示『图片右键菜单已就绪』、右键里却是空的」这类现象**可能周期性复现，
+   代码侧无法根治**。遇到时不要一头钻进注册逻辑里 —— 先按下面第 3 点走一遍。
+2. **`Alt`+右键是夸克下唯一不依赖浏览器原生菜单的单图采集路径**（走内容脚本自己的
+   `contextmenu` 监听）。必须长期保留，并在文档里作为首选兜底。**不要删。**
+3. K 报「右键没有这一项」时的标准处置顺序：
+   ① **点一下扩展图标** —— 打开面板即触发 `menu:status`，后台**顺手重注册一次**，菜单就补回来了
+   （这正是 2026-10-10 那次「已经好了」的成因，当时未改任何代码）；
+   ② 仍没有 → 用 `Alt`+右键；
+   ③ 持续没有 → `quark://flags` 搜 `context menu`，把 `Enable Context Menu` 设为 Enabled 后重启。
+
+**怎么查夸克里实际加载的是哪一版代码**（很值的一招，出问题先看这个）：
+
+```
+AppData/Local/Quark/User Data/Default/Secure Preferences
+  → extensions.settings['jbmfjfickcacfofeopbnomikennbhdei']
+    .service_worker_registration_info.version     ← 浏览器里实际在跑的那份代码的版本
+    .path                                          ← 应指向本目录
+```
+
+**注意**：扩展管理页的错误列表**会跨版本累积**，点「刷新 / 重新加载」不会清空它。
+所以看到「版本 1.5.1」旁边挂着一条报错，未必是 1.5.1 产生的 ——
+先让用户点「全部清除」再复测，这是区分「历史遗留」与「仍在复现」最快的一步。
+
+---
+
+## 六、验证怎么跑（改动后必跑）
+
+四套闸门，从快到慢。**`dev-tests/` 永不打包**，`tools/package.py` 里有硬性拦截。
+
+### 1. 静态闸门（最快，不需要任何服务）
+
+```bash
+node dev-tests/platform_check.mjs        # 预期 86 / 0
+```
+
+加载**真实的** `lib/util.js` 与 `background.js`（用最小 `chrome` stub）分五段断言：
+
+| 段 | 内容 |
+|---|---|
+| A | 命名规则：22 组夹具同时满足 Windows / macOS / Linux 约束、字节截断不切开多字节字符、清洗幂等 |
+| B | `nasLocalHint` 在 macOS 下不吐 `Z:\`，主机名与共享名从 `baseUrl` 推导而非硬编码 |
+| C | **菜单形态**：只注册 1 项、无 `parentId`、只在 `image` 上下文、标题固定；`fetchForClip` 处理 `data:` 时不走网络 |
+| D | **仓库卫生**：行尾约定、shebang、接收端残留为零、悬停残骸清零、无内联脚本、消息失败都处理、兜底网存在、图标存在且是合法 PNG |
+| E | 图标：manifest 声明的每个尺寸都能解码、边长对得上 |
+
+### 2. 真机闸门（最重要的一套）
+
+```bash
+node dev-tests/live_browser_check.mjs    # 预期 29 / 0
+```
+
+用 CDP 驱动 **Edge 无头**加载本扩展（独立临时 profile，用完即删）：
+
+- 认领 service worker，收 console 与异常
+- 逐个打开 `help` / `popup` / `options`，抓 CSP 违规
+- 在 SW 里用**畸形输入**把所有采集入口打一遍
+- 从**弹窗页面**走真实消息通道把后台每个分支打一遍（`chrome://` 页面不能发消息，必须从页面发）
+- 在真实活动标签页上跑一次 `viewport` 采集并**真落盘**
+- 打开 `chrome://extensions/?id=<扩展ID>`，**穿透 shadow DOM 读错误列表，断言为空**
+
+> **两个坑**：① 从 SW 给自己 `sendMessage` 不通（Chrome 不投回发送者所在 context），必须从页面发；
+> ② 弹窗里点「帮助 / 设置」会 `window.close()`，CDP 请求永不返回 —— `connect()` 里的 `send()`
+> 必须带超时（已内置 8 秒）。
+> **探测内容脚本**要另起临时 http 页（内容脚本只注入 http/https，扩展页面里测不到）：
+> Node `http` 起 `127.0.0.1` 随机端口，再从 SW `chrome.tabs.sendMessage(tabId, {type:'cc:ping'})`
+> 确认脚本在场 —— 有回复才说明这次探测有效。
+
+### 3. WebDAV 协议层 + 保存链路
+
+```bash
+# 需要 venv 里有 wsgidav：C:/Users/guok_1528/.workbuddy/binaries/python/envs/default
+#   Windows 上解释器在 envs/default/Scripts/python.exe（不是 bin/python）
+# 服务端必须与测试在**同一条命令**里起，否则后台进程被回收 → 假 fetch failed
+python dev-tests/dav_server.py <davroot> 8081 tester s3cret &
+node dev-tests/webdav_client_test.mjs        # 预期 10 / 0
+node dev-tests/save_integration_test.mjs     # 预期 14 / 0（含文件夹规则三例、落地文件 SHA-256 校验）
+```
+
+> 端口残留会让「文件名递增」类断言假失败：先 `netstat -ano | grep :8081` 找 PID，
+> 再 `taskkill //F //PID <pid>`。
+
+### 4. 打包闸门
+
+```bash
+python tools/package.py            # 校验 + 产出 ../lan-asset-collector-v<版本>.zip
+python tools/package.py --check    # 只校验不打包
+```
+
+校验项：manifest 引用的文件齐备、**版本号在 5 处一致**
+（`manifest.json` / `background.js` / `popup/popup.html` / `content/content.js` / `help/help.html`）、
+行尾约定、`dev-tests` 未混入、接收端无残留。打包时把 `755` 显式写进 zip 的 `external_attr`
+（Windows 上压缩会丢可执行位）。
+
+---
+
+## 七、故障排查
+
+| 症状 | 真实原因 | 处理 |
+|---|---|---|
+| 右键里没有「将图片保存至 LAN Collector」 | 菜单被浏览器重建而 SW 在休眠（夸克还多一层自绘菜单的因素） | 点一下扩展图标（=重注册）→ 仍无则 `Alt`+右键 → 再不行查 `quark://flags`。先看第五节 |
+| 改了菜单标题 / 图标，右键没变化 | 菜单由浏览器进程持有，刷新扩展不触发 `onInstalled`/`onStartup` | 已在顶层注册（v1.5.1 修）。仍有问题看注册表确认实际加载版本 |
+| 扩展管理页出现 `Uncaught (in promise) …` | 某处 Promise 形式的 `chrome.*` 没接失败 | 全库搜裸调用，套 `silent()` / `fire()`。**注意错误列表跨版本累积，先「全部清除」再复测** |
+| 扩展管理页出现 Content Security Policy 红字 | 页面里有内联 `<script>` / `onclick=` | 抽成独立 `.js`。D 段有闸门 |
+| 复制出的文件多了一层 `untitled/` | 空目录段走了文件名段的兜底 | 用 `CC.cleanDirSeg()` 而非 `cleanSeg()`（v1.5.4 修） |
+| 中文长文件名写失败 | 按字符数截断，实际超了 255 **字节** | `CC.sliceBytes` 按 UTF-8 字节算（v1.2.0 起） |
+| WebDAV 测试报 `fetch failed` | 服务端不在同一条 bash 调用里起，被回收了 | 见第六节第 3 点 |
+| 扩展测试里 8081 端口占用 | 上一轮残留 | `taskkill //F //PID` |
+| 「移除 + 重新加载」后不能保存 | `chrome.storage.local` 被清空了 | 设置页重填 NAS 账密 |
+
+---
+
+## 八、已知边界与**未验证项**（如实交接）
+
+功能边界：
+
+- 浏览器内部页面（`chrome://`、扩展商店、`file://`）无法采集，平台限制
+- 只处理**顶层文档**，未做跨域 iframe 内的图片采集
+- 批量采集抓原始文件；CDN 防盗链图片若连页面内兜底也拿不到，计入「失败」
+- 整页截图受 Canvas 面积限制，超过约 4000 万像素会自动缩放
+- WebDAV 口令以 **Basic 明文**随请求发送，务必只在局域网 / VPN 内使用
+
+**未验证项（必须如实向下传）**：
+
+- ✅ 扩展**已在 Edge 无头模式真机加载运行**，端到端采集链路跑通（v1.5.2 起）
+- ⚠️ **从未在 K 的夸克里亲眼验证过右键菜单的实际呈现** —— 只能确认扩展已加载、版本正确、
+  `create` 无报错；折叠/显示行为是按官方文档 + 注册表推断的，且受夸克自绘菜单支配
+- ⚠️ **从未在真实 macOS 机器上跑过端到端** —— macOS 相关只有路径提示文案与命名规则约束
+- ⚠️ WebDAV 根路径按群晖惯例假设为 `/共享名/子目录`，未在别的 NAS 上验证
+- ⚠️ Chromium 的 Private Network Access 策略是否会拦「扩展 → 私网 IP」，未实测
+
+---
+
+## 九、版本历史（为什么要改）
+
+| 版本 | 一句话 |
+|---|---|
+| v1.1.0 | 最初的「局域网接收端（http）」通道 |
+| v1.2.0 | 改走 **WebDAV 零部署**；文件名按 UTF-8 字节截断 |
+| v1.3.0 | Windows / macOS 双平台加固（路径提示分流、命名三平台并集） |
+| v1.4.0 | 一键剪藏右键菜单；**下线接收端通道**，老配置自动迁移 |
+| v1.5.0 | 菜单标题定为「将图片保存至 LAN Collector」；自绘图标（纯标准库生成 PNG） |
+| v1.5.1 | 菜单注册从生命周期事件**挪到 SW 顶层**（修「改了没反应」） |
+| v1.5.2 | 修扩展管理页两条红字（CSP 内联脚本 + `batchSave` 空标签页）；新增真机验证脚本 |
+| v1.5.3 | 消息封装一律返回对象；后台对未知指令明确回执 |
+| v1.5.4 | 明确「子目录模板」文件夹规则（修 `untitled` 幽灵目录）；`tabs.onActivated` 兜底重建菜单 |
+| v1.5.5 | **删除悬停采集**（按 K 要求），单图采集只剩右键 + `Alt`+右键 |
+| v1.5.6 | Promise 形式的 `chrome.*` 统一接住失败；三层兜底网；真机断言扩展管理页错误列表为空 |
+| v1.5.7 | 菜单注册改**单步**（去掉 `removeAll` 空档）；`windows.onFocusChanged` 兜底；弹窗加菜单状态诊断行 + 「重新注册」按钮 |
+
+---
+
+## 十、接手后的建议下一步
+
+按性价比排序：
+
+1. **把夸克这条路验掉**（唯一真正的盲区）。思路：启动夸克时带 `--remote-debugging-port`
+   与独立 `--user-data-dir`，用 CDP 驱动，再用 Windows UI Automation 枚举右键菜单的菜单项，
+   就能程序化回答「那一项到底在不在夸克的菜单里」。
+2. **在真实 macOS 上跑一遍端到端**，重点验 FSA 通道对 `/Volumes/…` 网络卷的授权句柄
+   在重新挂载后是否失效（README 里标注了「不稳」，但没实测）。
+3. 把 `dev-tests/live_browser_check.mjs` 从「Edge 无头」扩到「可指定任意 Chromium 内核可执行文件」，
+   这样夸克、Chrome、Edge 三处可以共用同一套真机断言。
+4. 若确定要长期维护，考虑给 `lib/` 加一层薄薄的单元测试（现在 A 段是夹具驱动，
+   覆盖的是命名规则，`webdav.js` 的边界分支只有集成测试覆盖）。
+
+---
+
+## 十一、约定速查（改代码前扫一眼）
+
+- `dev-tests/` **永不打包**；`tools/package.py` 里有硬性拦截
+- HTML 页面**禁止内联 `<script>` 与 `onclick=`**；内联 `<style>` / `style=` 不受限
+- 行尾：`.bat` 保持**纯 ASCII + CRLF**；其余（JS / HTML / CSS / JSON / MD / PY）一律 **LF**
+  - ⚠️ 用 Python 改文本后必须查行尾：`Path.write_text()` 在 Windows 上会把 LF 写成 CRLF，
+    D 段的行尾闸门会红。要写成 `p.write_bytes(data.replace(b'\r\n', b'\n'))`
+- 命名规则**全部集中在 `lib/util.js`**，不要散落到各处
+- 新增 `.sh` / `.command` 会被 `tools/package.py` 按后缀自动判定并置可执行位（否则在 macOS 上是 0644）
+- 清理网络共享 / Temp 下的测试残留，用 `ctypes.windll.kernel32.DeleteFileW` ——
+  本机有 `sitecustomize.py` 安全删除钩子会拦 `os.remove`
+- 版本号要**五处同步**，改完跑 `python tools/package.py --check`

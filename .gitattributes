@@ -1,0 +1,18 @@
+# 行尾约定 —— 与 dev-tests/platform_check.mjs 的 D 段（仓库卫生）保持一致
+#
+# 为什么要显式钉死：Windows 上 git 的 core.autocrlf 默认会让检出时把 LF 换成 CRLF，
+# 而这个项目除 .bat 之外一律要求 LF（见 README / HANDOVER 的约定速查）。
+# 一旦被换成 CRLF，D 段的行尾闸门会直接红，而且 diff 会整文件抖动。
+* text=auto eol=lf
+*.bat text eol=crlf
+
+# 二进制：禁止任何换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.zip binary
+
+# 交接与说明文档不计入语言统计
+HANDOVER.md linguist-documentation
