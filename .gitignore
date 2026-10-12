@@ -14,3 +14,6 @@ desktop.ini
 
 # 打包产物（正常生成在仓库的上一级目录）
 lan-asset-collector-v*.zip
+
+# WorkBuddy 的项目记忆（agent 元数据，属本机资料，不进公开仓库）
+.workbuddy/

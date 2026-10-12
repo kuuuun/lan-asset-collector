@@ -400,7 +400,9 @@ if (typeof bgSandbox.fetchForClip === 'function') {
 
 section('D. 仓库卫生');
 
-const SKIP_DIRS = new Set(['dev-tests', 'node_modules', '.git']);
+// `.workbuddy` 是 agent 的项目记忆（metadata），不是交付内容 —— package.py 的
+// EXCLUDE_DIRS 同样排除它。不跳过会让「行尾/残留」这类针对交付物的断言去管本机笔记。
+const SKIP_DIRS = new Set(['dev-tests', 'node_modules', '.git', '.workbuddy']);
 const TEXT_EXT = new Set(['.js', '.mjs', '.json', '.css', '.html', '.md', '.py', '.sh', '.command', '.bat', '.txt', '.yml', '.yaml']);
 
 function walk(dir, out = []) {
