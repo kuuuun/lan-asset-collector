@@ -607,11 +607,155 @@
 
   /* ================= 单图采集 ================= */
 
-  /** 只认 <img>：背景图 / canvas / 视频封面不算，避免误采 */
-  function isCollectableImage(el) {
-    if (!el) return null;
-    if (el.tagName === 'IMG') return el;
+  /**
+   * 找出「这一点下面真正的那张图」。
+   *
+   * 为什么不能只看 e.target 是不是 <img>：不少站点会在图片上盖一层**透明 div**
+   * （Pinterest 的视觉搜索热区是最典型的一个，还有各种自定义右键拦截层）。
+   * 此时 e.target 是那个 div —— 既不是 <img>，浏览器的 `contexts:['image']` 判定
+   * 也不会命中，所以连浏览器自带的「图片另存为」都一起消失。
+   *
+   * document.elementsFromPoint() 会把该点下方的**所有**元素按层级返回（覆盖层在最前），
+   * 顺着往下找第一个 <img> 即可 —— 那就是用户肉眼看到的那张图。
+   */
+  function imageUnderPoint(target, x, y) {
+    if (target && target.tagName === 'IMG') return target;
+    const hasPt = typeof x === 'number' && typeof y === 'number';
+    if (hasPt && typeof document.elementsFromPoint === 'function') {
+      for (const el of document.elementsFromPoint(x, y) || []) {
+        if (el && el.tagName === 'IMG') return el;
+      }
+    }
+    if (hasPt) {
+      // 退化路径：覆盖层与图片往往同处一个容器。往上最多找 3 层，
+      // 只认「确实盖住这个点」的那张图 —— 避免误抓同容器里的站点 logo 之类。
+      let box = target;
+      for (let i = 0; i < 3 && box; i++) {
+        const imgs = box.querySelectorAll ? box.querySelectorAll('img') : [];
+        for (const im of imgs) {
+          const r = im.getBoundingClientRect();
+          if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return im;
+        }
+        box = box.parentElement;
+      }
+    }
     return null;
+  }
+
+  /* ================= Pinterest 大图 ================= */
+
+  /** 元素当前是否可见（有尺寸、没被 display/visibility/opacity 藏起来、与视口有交集） */
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    const st = window.getComputedStyle ? window.getComputedStyle(el) : null;
+    if (st && (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0)) return false;
+    return r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
+  }
+
+  /**
+   * 扫出页面上的 Pinterest 图片候选。
+   *
+   * 不猜「当前是哪一个 pin」—— closeup 页里最大的那张可见图就是大图本身，
+   * 瀑布流里最大的一张缩略图所对应的 originals 也还是同一张原图。够用且不依赖
+   * Pinterest 随时会改的内部数据结构。
+   */
+  function pinCandidates() {
+    const out = [];
+    const seen = new Set();
+    const push = (url, w, h, front) => {
+      const u = String(url || '').trim().split(/\s+/)[0];
+      if (!/^https?:\/\/[^/]*pinimg\.com\//i.test(u)) return;
+      if (seen.has(u)) return;
+      seen.add(u);
+      out.push({ url: u, w: Number(w) || 0, h: Number(h) || 0, front: !!front });
+    };
+    const imgs = document.querySelectorAll('img');
+    for (const img of imgs) {
+      const nat = (img.naturalWidth || 0) * (img.naturalHeight || 0);
+      push(img.currentSrc || img.src || '', img.naturalWidth, img.naturalHeight, isVisible(img) && nat > 100000);
+      const ss = img.getAttribute && img.getAttribute('srcset');
+      if (ss) for (const part of String(ss).split(',')) push(part, 0, 0, false);
+      const orig = img.getAttribute && img.getAttribute('data-orig-img');
+      if (orig) push(orig, 0, 0, false);
+    }
+    return out;
+  }
+
+  function pinScan() {
+    const cands = pinCandidates();
+    if (!cands.length) return { error: '本页没有找到 Pinterest 图片' };
+    // 有自然尺寸的优先；在「可见且够大」的那批里挑面积最大的
+    const withArea = cands.filter((c) => c.w * c.h > 0);
+    const pool = withArea.length ? withArea : cands;
+    const best = pool.slice().sort((a, b) => (b.front - a.front) || (b.w * b.h - a.w * a.h))[0];
+    const h1 = document.querySelector('h1');
+    return {
+      ok: true,
+      url: best.url,
+      orig: CC.pinimgOriginal(best.url) || '',
+      w: best.w,
+      h: best.h,
+      title: (h1 && h1.textContent) || document.title || ''
+    };
+  }
+
+  /* ================= 大图推断 ================= */
+
+  /** 解析 srcset，按分辨率描述符从大到小返回候选地址（同一张图的不同尺寸） */
+  function srcsetLargest(img) {
+    const ss = (img.getAttribute && (img.getAttribute('srcset') || img.getAttribute('data-srcset'))) || '';
+    if (!ss) return [];
+    return String(ss)
+      .split(',')
+      .map((part) => {
+        const m = String(part).trim().match(/^(\S+)(?:\s+(\d+)w|\s+([\d.]+)x)?$/);
+        if (!m) return null;
+        return { url: m[1], w: m[2] ? Number(m[2]) : m[3] ? Math.round(Number(m[3]) * 1000) : 0 };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.w - a.w)
+      .map((p) => p.url);
+  }
+
+  /**
+   * 推断「这张图在页面上对应的最大版本」。
+   *
+   * 站点普遍把缩略图放在 `src`、把大图藏在别处：Pinterest 的 src/srcset 全是 236x/474x/736x
+   * 这类缩略图，点进 pin 详情页看到的那张才是大图。所以单图采集不能直接拿 `src`。
+   *
+   * 两条路，按可靠性排序：
+   *   ① pinimg 的尺寸段是纯路径规则 → 任意一张缩略图都能逆推出 originals 原图（确定，不怕改名）
+   *   ② 站点显式声明的大图属性（`data-orig-img` 等）→ 信站点自己给的
+   * 都没有时就老实退回页面上渲染的那张，不做无根据的放大猜测。
+   *
+   * @returns `{ url, alt }`：url 是首选大图；alt 是页面实际渲染的那张，抓取失败时的退路
+   */
+  function bigSourceOf(img) {
+    const page = String(img.currentSrc || img.src || '').trim();
+    const cands = [];
+    const feed = (v) => {
+      const u = String(v || '').trim().split(/\s+/)[0];
+      if (u) cands.push(u);
+    };
+
+    if (img.getAttribute) {
+      for (const a of ['data-orig-img', 'data-original', 'data-large', 'data-hires', 'data-full']) feed(img.getAttribute(a));
+    }
+    feed(page);
+    for (const u of srcsetLargest(img)) feed(u);
+
+    // ① CDN 路径规则能逆推原图 —— 最可靠，优先
+    for (const u of cands) {
+      const orig = CC.pinimgOriginal(u);
+      if (orig) return { url: orig, alt: page || u };
+    }
+    // ② 站点自己声明的大图属性
+    const explicit = String((img.getAttribute && img.getAttribute('data-orig-img')) || '').trim().split(/\s+/)[0];
+    if (explicit) return { url: explicit, alt: page };
+    // ③ 退回页面渲染的那张
+    return { url: page, alt: page };
   }
 
   /* ================= Alt + 右键 ================= */
@@ -620,16 +764,19 @@
     'contextmenu',
     (e) => {
       if (!settings.altRightClick || !e.altKey) return;
-      const img = isCollectableImage(e.target);
+      const img = imageUnderPoint(e.target, e.clientX, e.clientY);
       if (!img) return;
-      const src = img.currentSrc || img.src;
-      if (!src) return;
+      // 取「大图」而不是页面上那张缩略图；把缩略图作为抓取失败时的退路
+      const pick = bigSourceOf(img);
+      if (!pick || !pick.url) return;
+      const alt = pick.alt && pick.alt !== pick.url ? pick.alt : '';
       e.preventDefault();
       e.stopPropagation();
       const t = toast('正在采集图片…', 'wait');
       bg({
         type: 'single:save',
-        url: src,
+        url: pick.url,
+        fallbackUrl: alt,
         w: img.naturalWidth,
         h: img.naturalHeight,
         pageTitle: document.title,
@@ -674,7 +821,7 @@
   async function handle(msg) {
     switch (msg.type) {
       case 'cc:ping':
-        return { ok: true, version: '1.5.7' };
+        return { ok: true, version: '1.5.9' };
 
       case 'cc:toast':
         toast(msg.text || '', msg.kind || '', msg.ms);
@@ -714,6 +861,9 @@
 
       case 'cc:batch:open':
         return openBatchPanel(msg.minSize);
+
+      case 'pin:scan':
+        return pinScan();
 
       default:
         return { error: '未知指令 ' + msg.type };

@@ -6,7 +6,7 @@ importScripts('lib/util.js', 'lib/store.js', 'lib/webdav.js', 'lib/saver.js');
 
 const CC = self.CC;
 
-const VERSION = '1.5.7';
+const VERSION = '1.5.9';
 const CAPTURE_GAP = 320; // 两次 captureVisibleTab 之间的最小间隔（配额：2 次/秒）
 
 /* ================= 平台信息 =================
@@ -605,18 +605,32 @@ async function singleSave(tab, payload) {
   const target = await CC.checkTarget(settings);
   if (!target.ready) return { ok: false, error: target.reason || '保存目标未就绪' };
 
-  const fetched = payload.dataUrl
-    ? (() => {
-        const bytes = CC.dataUrlToBytes(payload.dataUrl);
-        return bytes
-          ? { ok: true, bytes, mime: CC.mimeFromDataUrl(payload.dataUrl) || 'image/png' }
-          : { ok: false, error: '图片数据无效' };
-      })()
-    : await fetchForClip(tab, payload.url);
-  if (!fetched.ok) return { ok: false, error: fetched.error || '图片抓取失败' };
+  // 首选地址抓不到时，退到 fallbackUrl 再抓一次。
+  // 为什么需要：「大图」常常是**推算**出来的（Pinterest 的 originals），而推算出的地址未必
+  // 真的存在 —— 从外站抓取来的 pin，Pinterest 根本没存原图。宁可拿到缩略图也不空手而归。
+  const order = [payload.url];
+  if (payload.fallbackUrl && payload.fallbackUrl !== payload.url) order.push(payload.fallbackUrl);
+
+  let fetched = null;
+  let used = payload.url || '';
+  if (payload.dataUrl) {
+    const bytes = CC.dataUrlToBytes(payload.dataUrl);
+    fetched = bytes
+      ? { ok: true, bytes, mime: CC.mimeFromDataUrl(payload.dataUrl) || 'image/png' }
+      : { ok: false, error: '图片数据无效' };
+  } else {
+    for (const url of order) {
+      fetched = await fetchForClip(tab, url);
+      if (fetched.ok) {
+        used = url;
+        break;
+      }
+    }
+  }
+  if (!fetched || !fetched.ok) return { ok: false, error: (fetched && fetched.error) || '图片抓取失败' };
 
   // 只有 http(s) 才适合从地址里猜扩展名；data:/blob: 一律按 mime 定
-  const ext = payload.ext || (/^https?:/i.test(payload.url || '') ? guessExt(payload.url, fetched.mime) : CC.extFromMime(fetched.mime));
+  const ext = payload.ext || (/^https?:/i.test(used || '') ? guessExt(used, fetched.mime) : CC.extFromMime(fetched.mime));
 
   return await CC.saveAsset({
     bytes: fetched.bytes,
@@ -628,12 +642,61 @@ async function singleSave(tab, payload) {
     page: CC.pageSlug(payload.pageTitle, CC.hostOf(payload.sourceUrl)),
     host: CC.hostOf(payload.sourceUrl),
     pageTitle: payload.pageTitle,
-    sourceUrl: payload.url,
+    sourceUrl: used,
     settings
   });
 }
 
 /* ================= 入口分发 ================= */
+
+/**
+ * Pinterest 大图采集（由弹窗的「采集本页大图」按钮触发）。
+ *
+ * 为什么单独开一条路：Pinterest 会在图片上盖一层透明 div，右键落点不是 <img> ——
+ * 浏览器既不出自带的「图片另存为」，也不出我们的 `contexts:['image']` 菜单项，
+ * 原生右键在这类站点上是死的。所以给它一个完全绕开右键的入口：点扩展图标 → 面板按钮。
+ *
+ * 取图策略：内容脚本把页面上的 pinimg 地址换算成 originals 原图 → **先按原图抓**；
+ * 失败（从外站抓取来的 pin，Pinterest 未必存了原图，会 403 或回落）**再退回页面上那张图**，
+ * 宁可拿到小的也不空手而归。
+ */
+async function collectPin(tabArg) {
+  const tab = tabArg && tabArg.id != null ? tabArg : await activeTab();
+  const bad = guard(tab);
+  if (bad) {
+    notify('无法采集', bad);
+    return { ok: false, error: bad };
+  }
+  if (!(await ensureContent(tab))) {
+    notify('无法采集', '当前页面不允许注入采集器');
+    return { ok: false, error: '当前页面不允许注入采集器' };
+  }
+
+  const scan = await cc(tab.id, { type: 'pin:scan' });
+  if (!scan || scan.error || (!scan.orig && !scan.url)) {
+    const msg = (scan && scan.error) || '本页没有找到 Pinterest 图片';
+    notify('没有找到大图', msg);
+    return { ok: false, error: msg };
+  }
+
+  const base = {
+    w: scan.w,
+    h: scan.h,
+    pageTitle: scan.title || (tab && tab.title) || '',
+    sourceUrl: (tab && tab.url) || ''
+  };
+  const attempts = [];
+  if (scan.orig) attempts.push(scan.orig);
+  if (scan.url && scan.url !== scan.orig) attempts.push(scan.url);
+
+  let res = null;
+  for (const url of attempts) {
+    res = await singleSave(tab, Object.assign({ url }, base));
+    if (res && res.ok) break;
+  }
+  reportSave(res, 'Pinterest 大图');
+  return res || { ok: false, error: '采集失败' };
+}
 
 async function runAction(action, tabArg) {
   const tab = tabArg || (await activeTab());
@@ -665,8 +728,12 @@ chrome.commands.onCommand.addListener(async (command) => {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId !== 'cc-image') return;
   try {
+    // info.srcUrl 是浏览器认出的那张图，多半是站点故意渲染的**缩略图**（Pinterest 全是 236x）。
+    // 能按 CDN 规则逆推出原图就用原图，推不出就原样；缩略图留作抓取失败时的退路。
+    const srcUrl = info.srcUrl || '';
     const res = await singleSave(tab, {
-      url: info.srcUrl,
+      url: CC.pinimgOriginal(srcUrl) || srcUrl,
+      fallbackUrl: srcUrl,
       w: info.width,
       h: info.height,
       pageTitle: (tab && tab.title) || '',
@@ -699,6 +766,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     case 'single:save':
       done(singleSave(sender.tab, msg));
+      return true;
+
+    case 'pin:collect':
+      // 弹窗触发时 sender.tab 是 undefined（消息来自扩展自身页面）——
+      // collectPin 内部会退回 chrome.tabs.query 找活动标签页
+      done(collectPin(sender.tab));
       return true;
 
     case 'status':

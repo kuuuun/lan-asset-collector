@@ -199,6 +199,33 @@ $('#menuFix') &&
     }
   });
 
+/* ---------------- Pinterest 大图入口 ---------------- */
+
+/**
+ * Pinterest 会在图片上盖一层透明 div：右键落点不是 <img>，于是浏览器自带的
+ * 「图片另存为」和我们的 `contexts:['image']` 菜单项**都不会出现** ——
+ * 那个站点上原生右键这条路是死的（代码侧绕不过去）。
+ * 所以给它一个不依赖右键的入口：当前页是 Pinterest 时，面板里直接出现这个按钮。
+ */
+const PIN_HOST = /^https?:\/\/([^/]*\.)?pinterest\.[a-z.]+(\/|$)/i;
+
+async function setupPinEntry() {
+  const btn = $('#pinGrab');
+  if (!btn) return;
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const url = (tabs && tabs[0] && tabs[0].url) || '';
+    if (PIN_HOST.test(url)) btn.hidden = false;
+  } catch (_) {}
+}
+
+$('#pinGrab') &&
+  $('#pinGrab').addEventListener('click', () => {
+    // 与四个主入口一致：后台继续执行，面板立即关闭（结果由系统通知回报）
+    send({ type: 'pin:collect' });
+    window.close();
+  });
+
 /* ---------------- 状态栏点击 = 测试连接 ---------------- */
 
 $('#status') && $('#status').addEventListener('click', async () => {
@@ -228,4 +255,6 @@ document.addEventListener('DOMContentLoaded', () => {
   loadStatus();
   // 打开面板即自检一次菜单，顺带把丢失的右键项补回来
   refreshMenuState(false);
+  // Pinterest 上右键这条路走不通，改用面板按钮
+  setupPinEntry();
 });

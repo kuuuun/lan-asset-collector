@@ -1,5 +1,9 @@
 * { box-sizing: border-box; }
 
+/* [hidden] 必须能压住 .wide 的 display:flex —— 否则「采集本页大图」在非 Pinterest
+   页面上仍会露出来 */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
@@ -140,6 +144,8 @@ html, body {
 .wide:hover { border-color: #bfdbfe; background: #f7fafe; }
 .wide:active { transform: scale(0.99); }
 .wide svg { width: 20px; height: 20px; color: #3b82f6; }
+
+.wide + .wide { margin-top: 9px; }
 
 kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

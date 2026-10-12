@@ -256,6 +256,10 @@ try {
       'await T("captureFullPage(undefined)", () => self.captureFullPage(undefined));',
       'await T("fetchForClip(undefined, data:)", () => self.fetchForClip(undefined, "data:image/png;base64,iVBORw0KGgo="));',
       'await T("fetchForClip(undefined, blob:)", () => self.fetchForClip(undefined, "blob:https://example.com/x"));',
+      // v1.5.8：Pinterest 大图采集。无标签页时必须回结构化错误而不是抛异常
+      'await T("collectPin(undefined)", () => self.collectPin(undefined));',
+      // v1.5.9：单图采集的 fallbackUrl 退路。首选地址无效时要继续尝试退路，且全程不抛异常
+      'await T("singleSave(fallbackUrl 退路)", () => self.singleSave(undefined, { url: "", fallbackUrl: "data:image/png;base64,iVBORw0KGgo=" }));',
       'return JSON.stringify(globalThis.__probe);',
     ].join('\n');
 
@@ -376,6 +380,21 @@ try {
           `class=${mbi.cls} text=${mbi.txt}`
         );
 
+        // v1.5.8：Pinterest 大图入口必须存在，且在「非 Pinterest 页面」上保持隐藏
+        // （弹窗本身开在 chrome-extension:// 页面，正是非 Pinterest 的情形）。
+        const pg = await c.send('Runtime.evaluate', {
+          expression:
+            "JSON.stringify({ has: !!document.getElementById('pinGrab'), hidden: !!(document.getElementById('pinGrab') || {}).hidden })",
+          returnByValue: true,
+        });
+        let pgi = {};
+        try { pgi = JSON.parse((pg.result && pg.result.value) || '{}'); } catch (_) {}
+        check(
+          '弹窗有 Pinterest 大图入口，且非 Pinterest 页面上保持隐藏',
+          pgi.has === true && pgi.hidden === true,
+          JSON.stringify(pgi)
+        );
+
         // 走真实的消息通道把后台的每个分支都打一遍（上面的直接调用绕过了 onMessage，
         // 测不到「消息包装/回复」这一层）。这里从弹窗页面发，sender.tab 是它自己。
         const msgs = [
@@ -386,6 +405,7 @@ try {
           ['run/batch', { type: 'run', action: 'batch' }],
           ['single:save', { type: 'single:save', url: 'data:image/png;base64,iVBORw0KGgo=' }],
           ['batch:save', { type: 'batch:save', items: [{ url: 'data:image/png;base64,iVBORw0KGgo=' }] }],
+          ['pin:collect', { type: 'pin:collect' }],
           ['unknown', { type: 'no-such-message' }],
         ];
         const chan = await c.send('Runtime.evaluate', {

@@ -169,6 +169,34 @@ for (const [, raw] of SEG_FIXTURES) {
 }
 check('cleanSeg 幂等', nonIdempotent.length === 0, nonIdempotent.join(' | '));
 
+// v1.5.8：Pinterest 原图换算。路径规则写错不会报错，只会静默拿到缩略图 —— 所以这里守着。
+const PIN_THUMB = 'https://i.pinimg.com/236x/ab/cd/ef/abcdef1234.jpg';
+check(
+  'pinimgOriginal 把尺寸段换算成 originals',
+  CC.pinimgOriginal(PIN_THUMB) === 'https://i.pinimg.com/originals/ab/cd/ef/abcdef1234.jpg',
+  CC.pinimgOriginal(PIN_THUMB)
+);
+check(
+  'pinimgOriginal 对 564x / 1200x / 74x 同样生效',
+  ['564x', '1200x', '74x'].every(
+    (s) => CC.pinimgOriginal(`https://i.pinimg.com/${s}/a/b/c/d.jpg`) === 'https://i.pinimg.com/originals/a/b/c/d.jpg'
+  )
+);
+check(
+  'pinimgOriginal 已是 originals 时幂等',
+  CC.pinimgOriginal('https://i.pinimg.com/originals/a/b/c/d.jpg') === 'https://i.pinimg.com/originals/a/b/c/d.jpg'
+);
+check(
+  'pinimgOriginal 对非 pinimg 域名 / 空值返回空串（可当判据用）',
+  CC.pinimgOriginal('https://example.com/236x/a.jpg') === '' &&
+    CC.pinimgOriginal('') === '' &&
+    CC.pinimgOriginal('not-a-url') === ''
+);
+check(
+  'pinimgOriginal 不被仿冒域名骗过（i.pinimg.com.evil.com）',
+  CC.pinimgOriginal('https://i.pinimg.com.evil.com/236x/a/b/d.jpg') === ''
+);
+
 /* ==========================================================================
  * B. background.js 的平台分流
  * ========================================================================== */
@@ -384,6 +412,41 @@ check(
   'background.js 里没有 menu:status 分支'
 );
 
+// v1.5.8：Pinterest 这类「图片上盖透明 div」的站点，右键这条路走不通
+// （浏览器自带的「图片另存为」和我们 contexts:['image'] 的菜单项都不出现）。
+// 所以必须有一条不依赖右键的入口：弹窗按钮 → 后台 pin:collect → 内容脚本 pin:scan。
+check(
+  '弹窗提供 Pinterest 大图入口（#pinGrab）',
+  /id="pinGrab"/.test(popupHtmlSrc) && /pin:collect/.test(popupJsSrc),
+  'popup 里缺少 #pinGrab 或它没有发 pin:collect'
+);
+check(
+  'background.js 暴露 collectPin（Pinterest 大图采集）',
+  typeof bgSandbox.collectPin === 'function',
+  '未找到 collectPin'
+);
+check(
+  "后台有 pin:collect 消息分支",
+  /case 'pin:collect'/.test(bgSource),
+  'background.js 里没有 pin:collect 分支'
+);
+
+// v1.5.9：单图采集的「大图推断」与 fallbackUrl 退路。
+// 站点普遍把缩略图放在 src、把大图藏在别处（Pinterest 的 src/srcset 全是 236x/474x/736x），
+// 单图采集若直接用 img.src，采到的就是页面上那张小图 —— 必须走 bigSourceOf。
+// 而推算出来的地址未必真的存在（从外站抓取来的 pin 没有 originals），所以要留 fallbackUrl 退路。
+// （涉及 contentSrc 的断言在 C 段，那边才定义这个变量）
+check(
+  'singleSave 支持 fallbackUrl（首选抓失败就退回再抓）',
+  /payload\.fallbackUrl/.test(bgSource) && /\(fetched && fetched\.error\)/.test(bgSource),
+  'background.js 的 singleSave 没有处理 fallbackUrl'
+);
+check(
+  '原生右键菜单项（cc-image）也做 pinimg 原图换算',
+  /CC\.pinimgOriginal\(srcUrl\)/.test(bgSource),
+  'cc-image 分支没有换算原图，右键采到的仍是缩略图'
+);
+
 if (typeof bgSandbox.fetchForClip === 'function') {
   // 沙箱里的 fetch 会直接 reject：能成功就说明根本没走网络
   const r = await bgSandbox.fetchForClip(null, 'data:image/png;base64,iVBORw0KGgo=');
@@ -460,6 +523,36 @@ check(
   '内容脚本不再监听 mouseover / mouseout / scroll（悬停按钮的触发源）',
   !/addEventListener\(\s*'mouseover'/.test(contentSrc) && !/addEventListener\(\s*'mouseout'/.test(contentSrc),
   '仍存在悬停相关监听器 —— 它会在每个含图片的页面上常驻'
+);
+
+// v1.5.8：图片上盖透明 div 的站点（Pinterest 是最典型的），右键落点不是 <img>。
+// Alt+右键 必须能穿透覆盖层找到用户真正看到的那张图 —— 退回「只看 e.target 是不是 IMG」
+// 就会在这类站点上静默失效（那正是 v1.5.7 及以前的实现）。
+check(
+  '内容脚本用 elementsFromPoint 穿透图片覆盖层',
+  /document\.elementsFromPoint/.test(contentSrc),
+  'content.js 不再穿透覆盖层，Alt+右键 在 Pinterest 上会失效'
+);
+// v1.5.9：单图采集要拿「大图」，不能直接用 src（站点把缩略图放 src、大图藏在别处）。
+check(
+  '内容脚本有 bigSourceOf（大图推断）',
+  /function bigSourceOf\s*\(/.test(contentSrc),
+  'content.js 里没有 bigSourceOf'
+);
+check(
+  'Alt+右键 走大图推断，并把页面那张留作退路',
+  /bigSourceOf\(img\)/.test(contentSrc) && /fallbackUrl:\s*alt/.test(contentSrc),
+  'Alt+右键 仍直接使用 img.currentSrc/img.src —— 在 Pinterest 上采到的还是缩略图'
+);
+check(
+  '内容脚本不再只认 e.target 是 <img>（旧 isCollectableImage 已移除）',
+  !/isCollectableImage/.test(contentSrc),
+  '仍存在 isCollectableImage —— 它只看 e.target，覆盖层场景会漏'
+);
+check(
+  '内容脚本有 pin:scan 分支（Pinterest 大图扫描）',
+  /case 'pin:scan'/.test(contentSrc),
+  'content.js 里没有 pin:scan 分支'
 );
 
 // MV3 的默认 CSP 是 script-src 'self'：页面里的**内联 <script>** 与 onclick="…" 这类

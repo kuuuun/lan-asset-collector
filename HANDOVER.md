@@ -1,7 +1,7 @@
 # 交接说明 · 素材采集器（LAN Collector）
 
 > 交接对象：接手维护这个扩展的开发者。
-> 当前版本 **v1.5.7**，交接日期 **2026-10-10**。
+> 当前版本 **v1.5.9**，交接日期 **2026-10-10**（v1.5.8 / v1.5.9 变更补充于 2026-10-12）。
 > 这份文件只讲「怎么接手、别踩哪些坑」，功能怎么用看 [README.md](README.md)。
 
 ---
@@ -57,7 +57,7 @@ lib/store.js   (184)   设置读写（chrome.storage.local）+ IndexedDB（目�
 lib/webdav.js  (230)   WebDAV 客户端：探测 / 逐级 MKCOL / PUT（含同名保护）
 lib/saver.js   (211)   保存层：通道分发（webdav / fsa）+ 目标校验 + 取图
 lib/imageproc.js(118)  页面内 Canvas 处理：裁剪 / 格式转换 / 整页拼接（跑在内容脚本里）
-content/content.js(720) 区域选框、Alt+右键、批量面板、整页滚屏与拼接、页内提示
+content/content.js(883) 区域选框、Alt+右键（大图推断）、批量面板、整页滚屏与拼接、页内提示
 popup/         功能面板（对齐 Billfish 布局，含右键菜单状态自检行）
 options/       设置页
 help/          使用说明页
@@ -71,12 +71,14 @@ dev-tests/     四套验证脚本，永不打包
 | 位置 | 函数 | 作用 |
 |---|---|---|
 | `background.js` | `buildMenus()` | **单步**注册右键菜单（create → 已存在则 update），顶层调用 |
+| | `collectPin(tab)` | Pinterest 大图采集：`pin:scan` 换算 originals → **先抓原图、失败退回页面那张** → 保存（见第四节第 9 条） |
 | | `fetchForClip(tab, url)` | 剪藏的**三层取图兜底**：`data:` 直接解码 / `blob:` 交内容脚本 / `http(s)` 先后台抓、失败回页面带 Cookie+Referer 重试 |
-| | `singleSave` / `batchSave` | 单图 / 批量落盘入口 |
+| | `singleSave` / `batchSave` | 单图 / 批量落盘入口。`singleSave` 支持 **`fallbackUrl`**：首选地址（多为推算出来的大图）抓失败就退到它再抓一次 |
 | | `captureRegion` / `captureViewport` / `captureFullPage` | 三种截屏编排 |
 | | `persist(tab, dataUrl, type, extra)` | 统一的「转码 → 命名 → 写盘 → 计数 → 通知」出口 |
 | | `silent(p)` | 包住 Promise 形式的 `chrome.*` 调用（**try/catch 抓不住 Promise 拒绝**，见第五节） |
 | `lib/util.js` | `CC.cleanSeg` / `CC.cleanDirSeg` | **文件名段**（空则兜底 `untitled`）vs **目录段**（空则丢弃）—— 语义不同，别合并 |
+| | `CC.pinimgOriginal(url)` | Pinterest CDN 地址 → `originals` 原图；非 pinimg 域名返回空串（当判据用） |
 | | `CC.sanitizeRelPath(p)` | 把模板算出的相对路径逐段清洗 |
 | | `CC.sliceBytes` / `CC.utf8Len` | 按 **UTF-8 字节** 截断（NAS 上是 255 字节上限，不是字符） |
 | `lib/saver.js` | `CC.saveAsset(asset)` | 唯一落盘入口，按 `settings.mode` 分发到 webdav / fsa |
@@ -86,7 +88,8 @@ dev-tests/     四套验证脚本，永不打包
 
 ```
 contextMenus.onClicked ('cc-image')
-  → singleSave(tab, { url: info.srcUrl, w, h })
+  → singleSave(tab, { url: CC.pinimgOriginal(info.srcUrl) || info.srcUrl,
+                      fallbackUrl: info.srcUrl, w, h })   ← 能逆推原图就采原图
     → fetchForClip()  ─┬─ data:  → 本地解码
                        ├─ blob:  → sendMessage('cc:image:fetch') 给内容脚本
                        └─ http(s)→ 后台 fetch；失败 → 内容脚本带页面凭证重试
@@ -175,6 +178,40 @@ K 明确要求「不要鼠标悬停采集」。原来它会在**每个含图片�
 的全局监听器 + 一个浮动层，对浏览性能是持续的负担。
 单图采集只剩两条路：**图片上右键一键剪藏**、**`Alt`+右键**。
 `minSize` 仍有效，但只作用于批量采集面板。D 段有两条残骸闸门守着。
+
+### 9. 「图片上盖了一层透明 div」的站点（Pinterest 是最典型的），右键这条路是死的
+
+这不是我们代码的缺陷，是**浏览器判定 + 站点结构**叠加的结果：
+
+- 站点在图片上盖一层透明 div（Pinterest 用视觉搜索热区），右键落点 `e.target` 是那个 **div**；
+- 浏览器的 `contexts: ['image']` **不命中** → 我们的菜单项不出现；
+- **同时**浏览器自带的「图片另存为」也不出现 —— 使用者看到的正是「右键里什么都没有」；
+- 有的站点还会直接 `preventDefault()` 掉 `contextmenu`，整个原生菜单都不弹。
+
+由这条推出三件事：
+
+1. **`Alt`+右键 必须穿透覆盖层**。内容脚本的 `imageUnderPoint(target, x, y)`
+   用 `document.elementsFromPoint(x, y)`（返回该点下方**所有**元素，覆盖层在最前）
+   顺层找第一个 `<img>` —— 这就是用户肉眼看到的那张图。
+   **不要退回「只看 `e.target.tagName === 'IMG'`」**：那正是 v1.5.7 及以前 Alt+右键 在这类站点上失效的原因。
+2. **为此类站点提供不依赖右键的入口**：弹窗面板的「采集本页大图（Pinterest 原图）」
+   （`popup` 的 `#pinGrab` → 后台 `pin:collect` → 内容脚本 `pin:scan`）。
+   **它只对 Pinterest 显示**（`PIN_HOST` 正则），其它站点不出现，不打扰。
+3. **Pinterest 的 CDN 路径是可预测的**，取原图不需要解析它的内部数据：
+   `https://i.pinimg.com/<尺寸段>/ab/cd/ef/<hash>.jpg`（尺寸段 74x/170x/236x/474x/564x/736x/1200x 等）
+   → 把尺寸段换成 `originals` 就是原始文件。换算函数是 `CC.pinimgOriginal()`（`lib/util.js`，纯函数、A 段有闸门）。
+   **例外**：从外站抓取来的 pin，Pinterest 未必存了原图 → `originals` 可能 403/回落；
+   所以 `collectPin()` 是**先试原图、失败退回页面上那张图**，宁可拿到小的也不空手。
+   这种 pin 的原站地址有时在元素的 `data-orig-img` 属性里。
+4. **单图采集要拿「大图」，不能直接用 `src`**（v1.5.9）。站点普遍把缩略图放在 `src`、
+   把大图藏在别处（Pinterest 的 `src`/`srcset` 全是 236x/474x/736x 这类缩略图），
+   直接用 `src` 采到的就是小图。内容脚本的 `bigSourceOf(img)` 按可靠性排序取：
+   ① CDN 路径规则能逆推的（pinimg → `originals`，最可靠）
+   ② 站点自己声明的大图属性（`data-orig-img` 等）
+   ③ 都没有就退回页面渲染的那张，**不做无根据的放大猜测**。
+   `Alt`+右键 与 `cc-image` 菜单项都走这条。换出来的地址多是**推算值**，所以配上
+   `singleSave` 的 `fallbackUrl` 兜底 —— 与 `collectPin()` 是同一套「先原图、失败退回」的思路。
+   返回的 `{ url, alt }` 里 `alt` 就是那个退路，别把它丢掉。
 
 ---
 
@@ -287,6 +324,8 @@ python tools/package.py --check    # 只校验不打包
 | 症状 | 真实原因 | 处理 |
 |---|---|---|
 | 右键里没有「将图片保存至 LAN Collector」 | 菜单被浏览器重建而 SW 在休眠（夸克还多一层自绘菜单的因素） | 点一下扩展图标（=重注册）→ 仍无则 `Alt`+右键 → 再不行查 `quark://flags`。先看第五节 |
+| **Pinterest 上右键里什么都没有（连浏览器自带「图片另存为」都没有）** | 图片上盖了**透明 div**，`contexts:['image']` 不命中；部分是站点 `preventDefault` 了 contextmenu | 这是站点结构决定的，**代码侧绕不过**。用「点扩展图标 → 采集本页大图」或 `Alt`+右键（v1.5.8 起已能穿透覆盖层）。见第四节第 9 条 |
+| 右键采集到的图很小 / 是缩略图 | 站点把缩略图放在 `src`、把大图藏在别处（Pinterest 最典型） | 单图采集已自动取大图（v1.5.9）：能按 CDN 规则逆推就用原图，能读到 `data-orig-img` 就用它。若该站既无可逆推规则、又没声明大图属性，只能拿页面渲染的那张 —— 站点结构决定，别硬猜 |
 | 改了菜单标题 / 图标，右键没变化 | 菜单由浏览器进程持有，刷新扩展不触发 `onInstalled`/`onStartup` | 已在顶层注册（v1.5.1 修）。仍有问题看注册表确认实际加载版本 |
 | 扩展管理页出现 `Uncaught (in promise) …` | 某处 Promise 形式的 `chrome.*` 没接失败 | 全库搜裸调用，套 `silent()` / `fire()`。**注意错误列表跨版本累积，先「全部清除」再复测** |
 | 扩展管理页出现 Content Security Policy 红字 | 页面里有内联 `<script>` / `onclick=` | 抽成独立 `.js`。D 段有闸门 |
@@ -335,6 +374,8 @@ python tools/package.py --check    # 只校验不打包
 | v1.5.5 | **删除悬停采集**（按 K 要求），单图采集只剩右键 + `Alt`+右键 |
 | v1.5.6 | Promise 形式的 `chrome.*` 统一接住失败；三层兜底网；真机断言扩展管理页错误列表为空 |
 | v1.5.7 | 菜单注册改**单步**（去掉 `removeAll` 空档）；`windows.onFocusChanged` 兜底；弹窗加菜单状态诊断行 + 「重新注册」按钮 |
+| v1.5.8 | 修 `Alt`+右键 在「图片上盖透明 div」的站点（Pinterest 等）失效；新增 Pinterest 大图采集（`CC.pinimgOriginal` + `pin:scan`/`pin:collect` + 弹窗「采集本页大图」入口） |
+| v1.5.9 | 单图采集（`Alt`+右键 / `cc-image`）改走「大图推断」`bigSourceOf`：pinimg 自动换算 `originals`、认 `data-orig-img`、否则退回页面那张；`singleSave` 新增 `fallbackUrl` 兜底 |
 
 ---
 
