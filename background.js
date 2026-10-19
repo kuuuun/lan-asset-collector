@@ -6,7 +6,7 @@ importScripts('lib/util.js', 'lib/store.js', 'lib/webdav.js', 'lib/saver.js', 'l
 
 const CC = self.CC;
 
-const VERSION = '1.6.4';
+const VERSION = '1.6.5';
 const CAPTURE_GAP = 320; // 两次 captureVisibleTab 之间的最小间隔（配额：2 次/秒）
 
 /* ================= 平台信息 =================
@@ -114,6 +114,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   } catch (_) {} // 写设置失败也不该让安装回调抛出一个未捕获异常
   buildMenus();
   refreshBadge();
+  silent(refreshComfyDnr());
   if (details.reason === 'install') {
     silent(chrome.tabs.create({ url: chrome.runtime.getURL('help/help.html?first=1') }));
   }
@@ -122,7 +123,16 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 chrome.runtime.onStartup.addListener(() => {
   buildMenus();
   refreshBadge();
+  silent(refreshComfyDnr());
 });
+
+/** session 规则在浏览器关闭后清空，所以安装 / 启动 / 每次反推前都对齐一次 */
+async function refreshComfyDnr() {
+  try {
+    const s = await CC.getSettings();
+    await ensureComfyDnr(s.comfy || {});
+  } catch (_) {}
+}
 
 /* ================= 右键菜单 ================= */
 
@@ -811,9 +821,63 @@ async function libThumb(url) {
 
 /* ================= 反推提示词（本地 ComfyUI） ================= */
 
+/**
+ * ComfyUI 的 origin 校验（server.py 里的 create_origin_only_middleware）：
+ *   只要 Host 是回环地址，它就要求 **Origin 与自己同名**，否则直接 403 空 body；
+ *   另外 `Sec-Fetch-Site: cross-site` 也会被 403。
+ * 扩展发起的 fetch，Origin 是 `chrome-extension://<id>`，两条都撞 ——
+ * 现象就是 GET /system_stats 正常（GET 不带 Origin），一上传就「HTTP 403」。
+ *
+ * 用 declarativeNetRequest 只对**用户配置的那个 ComfyUI 地址**改写这两个头：
+ *   - 网页偷偷 POST 到 127.0.0.1:8188 时走的是网页自己的 origin，不受这条影响
+ *     （ComfyUI 那道防护对网页依然有效，我们只放行本扩展的请求）
+ *   - 地址不是回环（家里连单位电脑的 10.x / 100.x）时 ComfyUI 根本不查这件事，
+ *     所以把规则撤掉，不留无用的改写
+ */
+const COMFY_DNR_ID = 9001;
+
+async function ensureComfyDnr(cfg) {
+  const api = chrome.declarativeNetRequest;
+  if (!api || !api.updateSessionRules) return { ok: false, error: '当前浏览器不支持请求头改写' };
+  const base = CC.normalizeComfyUrl(cfg && cfg.baseUrl);
+  const drop = async () => {
+    try {
+      await api.updateSessionRules({ removeRuleIds: [COMFY_DNR_ID] });
+    } catch (_) {}
+  };
+  if (!base || !CC.isLoopbackUrl(base)) {
+    await drop();
+    return { ok: true, skipped: 'non-loopback' };
+  }
+  try {
+    await api.updateSessionRules({
+      removeRuleIds: [COMFY_DNR_ID],
+      addRules: [
+        {
+          id: COMFY_DNR_ID,
+          priority: 1,
+          action: {
+            type: 'modifyHeaders',
+            requestHeaders: [
+              { header: 'Origin', operation: 'set', value: base },
+              { header: 'Sec-Fetch-Site', operation: 'set', value: 'same-origin' },
+            ],
+          },
+          condition: { urlFilter: '|' + base + '/', resourceTypes: ['xmlhttprequest'] },
+        },
+      ],
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
 async function comfyReverse(payload) {
   const s = await CC.getSettings();
   const cfg = s.comfy || {};
+  // 上传前把请求头改写规则对齐到当前地址（幂等，几十微秒；改过地址也能立刻生效）
+  await ensureComfyDnr(cfg);
 
   let bytes = null;
   let mime = 'image/png';

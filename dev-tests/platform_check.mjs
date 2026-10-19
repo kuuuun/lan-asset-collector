@@ -789,7 +789,7 @@ const bgSrc = read('background.js');
 const comfySrc = read('lib/comfy.js');
 const offSrc = read('offscreen.js');
 
-check('manifest 版本与后台常量一致', manifest.version === '1.6.4', manifest.version);
+check('manifest 版本与后台常量一致', manifest.version === '1.6.5', manifest.version);
 
 // 剪贴板：MV3 里唯一稳定的路径是 offscreen + clipboardWrite，两者缺一不可
 check('manifest 申请了 offscreen 权限', (manifest.permissions || []).includes('offscreen'), JSON.stringify(manifest.permissions));
@@ -878,6 +878,41 @@ for (const page of ['studio/studio.html', 'offscreen.html']) {
   const html = read(page);
   check(`${page} 无内联 <script>`, !/<script(?![^>]*\bsrc=)[^>]*>/i.test(html));
   check(`${page} 无 onclick=`, !/\son\w+\s*=/i.test(html));
+}
+
+/* ---- v1.6.5：ComfyUI 的 origin 校验会 403 掉扩展的上传 ---- */
+{
+  const manifest2 = JSON.parse(read('manifest.json'));
+  check(
+    '声明了 declarativeNetRequest（改写请求头要用）',
+    (manifest2.permissions || []).includes('declarativeNetRequest'),
+    JSON.stringify(manifest2.permissions)
+  );
+  check(
+    '后台有改写规则的函数与固定 id',
+    /async function ensureComfyDnr/.test(bgSrc) && /COMFY_DNR_ID = 9001/.test(bgSrc)
+  );
+  check(
+    '只改 Origin 与 Sec-Fetch-Site 两个头',
+    /header: 'Origin', operation: 'set'/.test(bgSrc) && /header: 'Sec-Fetch-Site', operation: 'set'/.test(bgSrc)
+  );
+  check(
+    '规则只作用于 xmlhttprequest（不碰页面导航/子资源）',
+    /resourceTypes: \['xmlhttprequest'\]/.test(bgSrc)
+  );
+  check(
+    '只在地址是回环时才留规则，其它地址会撤掉',
+    /CC\.isLoopbackUrl\(base\)/.test(bgSrc) && /removeRuleIds: \[COMFY_DNR_ID\]/.test(bgSrc)
+  );
+  check(
+    '安装与启动时都对齐一次（session 规则关浏览器就没了）',
+    (bgSrc.match(/refreshComfyDnr\(\)/g) || []).length >= 2
+  );
+  check('反推前会再对齐一次地址', /await ensureComfyDnr\(cfg\)/.test(bgSrc));
+  check(
+    '403 的报错说清了原因与两条出路',
+    /HTTP 403/.test(comfySrc) && /--enable-cors-header/.test(comfySrc) && /局域网地址/.test(comfySrc)
+  );
 }
 
 /* ---- v1.6.3：失败留痕（Alt+右键 静默 → 分级提示 → 能回看原文） ---- */

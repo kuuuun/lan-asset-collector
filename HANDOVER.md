@@ -1,7 +1,7 @@
 # 交接说明 · 素材采集器（LAN Collector）
 
 > 交接对象：接手维护这个扩展的开发者。
-> 当前版本 **v1.6.4**，交接日期 **2026-10-10**（v1.5.8 / v1.5.9 补充于 2026-10-12，v1.6.0 ~ v1.6.4 补充于 2026-10-19）。
+> 当前版本 **v1.6.5**，交接日期 **2026-10-10**（v1.5.8 / v1.5.9 补充于 2026-10-12，v1.6.0 ~ v1.6.5 补充于 2026-10-19）。
 > 这份文件只讲「怎么接手、别踩哪些坑」，功能怎么用看 [README.md](README.md)。
 
 ---
@@ -313,6 +313,50 @@ K 的场景是「家里 MacBook 调单位电脑的 GPU」。要分清三层，�
 另外 `comfyReverse` 会把**模型回显指令**的输出当成空结果（`looksLikeEcho`）并重试一次：
 这种情况在弱模型 / 小图上很常见，回显的指令粘进 Krea 就是一段说明文，绝不能当结果交给用户。
 
+### 16. ComfyUI 会 403 掉扩展发起的上传 —— 必须改写请求头（v1.6.5）
+
+现象：设置页「测试 ComfyUI」显示已连接，**一上传就 `HTTP 403` 且响应体为空**（server 头是 aiohttp）。
+
+根因在 ComfyUI 自己的 `server.py`：
+
+```python
+if args.enable_cors_header:  middlewares.append(create_cors_middleware(...))
+else:                        middlewares.append(create_origin_only_middleware())
+```
+
+`create_origin_only_middleware` 有两条硬规则：
+
+1. `Sec-Fetch-Site: cross-site` → 403；
+2. **Host 是回环地址时**，要求 `Origin` 的 host 与 Host 同名，否则 403。
+
+扩展发起的是 `POST /upload/image`，浏览器给 `Origin: chrome-extension://<id>`，
+`Sec-Fetch-Site` 也不是 same-origin —— 两条都撞。**GET 不带 Origin**，所以
+`/system_stats` 一直是 200，这就是「测试连接正常、上传 403」的全部原因。
+
+实测矩阵（同一扩展后台）：
+
+| ComfyUI 地址 | POST /upload/image |
+|---|---|
+| `127.0.0.1:8188` | **403** |
+| `10.222.222.1:8188`（节点小宝） | 200 |
+| `172.18.23.232:8188`（内网） | 200 |
+
+即：**只有回环地址会撞**，因为 `is_loopback(host)` 为假时那条 Origin 检查整个跳过。
+
+解法是 `ensureComfyDnr(cfg)`（background.js）：用 `declarativeNetRequest` 的
+**session 规则**（id 固定 `9001`）对**该 ComfyUI 地址的 `xmlhttprequest`** 改写
+`Origin` → 地址本身、`Sec-Fetch-Site` → `same-origin`。
+
+- **地址不是回环就撤掉规则** —— 那里不需要，留着只是无谓的头改写
+- 规则只在对话期间有效（session），所以 `onInstalled` / `onStartup` / **每次反推前**各对齐一次
+- 不采用 `--enable-cors-header`：那会把 origin 校验整个换掉，**网页偷偷 POST 到 127.0.0.1:8188 也能进**。
+  DNR 只改本扩展发出的请求，网页那条路仍被 ComfyUI 挡住
+- 权限 +`declarativeNetRequest`；`minimum_chrome_version` 无需再抬（109 已满足）
+
+⚠️ **不要**把「403」写成「地址填错 / 网络不通」：那是本机地址下的**预期行为**，
+网络和 ComfyUI 都是好的。文案必须说清「它只接受同源请求」并给两条出路
+（换局域网地址 / 加 `--enable-cors-header`）。
+
 ---
 
 ## 五、关于夸克浏览器：一条必须先讲清的前提
@@ -356,7 +400,7 @@ AppData/Local/Quark/User Data/Default/Secure Preferences
 ### 1. 静态闸门（最快，不需要任何服务）
 
 ```bash
-node dev-tests/platform_check.mjs        # 预期 154 / 0
+node dev-tests/platform_check.mjs        # 预期 162 / 0
 ```
 
 加载**真实的** `lib/util.js` 与 `background.js`（用最小 `chrome` stub）分五段断言：
@@ -373,7 +417,7 @@ node dev-tests/platform_check.mjs        # 预期 154 / 0
 ### 2. 真机闸门（最重要的一套）
 
 ```bash
-node dev-tests/live_browser_check.mjs    # 预期 49 / 0
+node dev-tests/live_browser_check.mjs    # 预期 51 / 0
 ```
 
 用 CDP 驱动 **Edge 无头**加载本扩展（独立临时 profile，用完即删）：
@@ -508,6 +552,7 @@ python tools/package.py --check    # 只校验不打包
 | v1.6.2 | `Alt`+右键**失败不再静默**：四个分支（开关关了 / 没认出图 / 读不到地址 / 扩展重载后旧标签页脚本作废）各自给提示，并把「刷新本页」单列出来；真机闸门新增 3 条常驻断言（抢到 / 不误抢 / 不误拦），45 → 48 |
 | v1.6.3 | **失败留痕**：内容脚本与后台都往 `collector.lastError` 写一份（含 where / message / url / at），弹窗把它显示成「上次失败 时间 · 原因」（超 24h 不显示）。五秒的页内提示说不清的事，事后能回看；静态闸门 +5（149 → 154） |
 | v1.6.4 | **反推入口不再隐形**：工作台侧栏从「选中才出现」改成常驻 —— 未选中时写明「点任意一张图，这里会出现：复制图片 / 反推提示词 / 打开原图」，并显示当前目录图片数与 ComfyUI 在线状态；窄窗口面板改到上方。真机闸门 +1（48 → 49） |
+| v1.6.5 | **修「上传图片失败（HTTP 403）」**：ComfyUI 的 `create_origin_only_middleware` 在 Host 为回环时要求 POST 的 Origin 同名，扩展的 `chrome-extension://` 必被 403（GET 不带 Origin 所以「测试连接」是通的）。用 `declarativeNetRequest` 只对配置的 ComfyUI 地址改写 `Origin` / `Sec-Fetch-Site`，非回环地址自动撤规则；权限 +`declarativeNetRequest`。真机端到端出词 21.6s / 1701 字符。静态 +8（154 → 162）、真机 +2（49 → 51） |
 
 ---
 

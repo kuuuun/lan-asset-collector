@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "素材采集器 · LAN Collector",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "在图片上右键一键剪藏，或区域截图 / 可视区截图 / 整页滚动截图 / 批量采集，直接保存到 NAS 或本机目录，不经过第三方素材库软件。",
   "minimum_chrome_version": "109",
   "permissions": [
@@ -12,9 +12,12 @@
     "contextMenus",
     "notifications",
     "offscreen",
-    "clipboardWrite"
+    "clipboardWrite",
+    "declarativeNetRequest"
   ],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -34,35 +37,57 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["lib/util.js", "lib/imageproc.js", "content/content.js"],
-      "css": ["content/content.css"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "lib/util.js",
+        "lib/imageproc.js",
+        "content/content.js"
+      ],
+      "css": [
+        "content/content.css"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }
   ],
   "commands": {
     "batch-collect": {
-      "suggested_key": { "default": "Ctrl+1" },
+      "suggested_key": {
+        "default": "Ctrl+1"
+      },
       "description": "批量采集本页图片"
     },
     "region-shot": {
-      "suggested_key": { "default": "Ctrl+2" },
+      "suggested_key": {
+        "default": "Ctrl+2"
+      },
       "description": "自定义区域截图"
     },
     "viewport-shot": {
-      "suggested_key": { "default": "Ctrl+3" },
+      "suggested_key": {
+        "default": "Ctrl+3"
+      },
       "description": "可视区域截图"
     },
     "fullpage-shot": {
-      "suggested_key": { "default": "Ctrl+4" },
+      "suggested_key": {
+        "default": "Ctrl+4"
+      },
       "description": "整页滚动截图"
     }
   },
   "web_accessible_resources": [
     {
-      "resources": ["assets/*", "content/*"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "assets/*",
+        "content/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "icons": {

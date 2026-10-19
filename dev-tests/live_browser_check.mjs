@@ -763,6 +763,36 @@ try {
           const swf = String((swFetch.result && swFetch.result.value) || '');
           check('后台能直接访问本机端口（ComfyUI 走同一条路）', /status 200/.test(swf), swf);
 
+          // v1.6.5：ComfyUI 在回环地址上要求 POST 的 Origin 与自己同名，扩展的
+          // chrome-extension:// 会被它 403。这条断言盯的是「改写规则真的注册上了」——
+          // 它比「能不能反推」稳（不依赖 ComfyUI 是否开着、模型是否加载）。
+          const dnr = await swCdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              try {
+                const r = await ensureComfyDnr({ baseUrl: 'http://127.0.0.1:8188' });
+                const rules = await chrome.declarativeNetRequest.getSessionRules();
+                const hit = rules.find((x) => x.id === 9001);
+                const hdrs = hit ? (hit.action.requestHeaders || []).map((h) => h.header + '=' + h.value).join(',') : '';
+                return JSON.stringify({ ok: r.ok, ids: rules.map((x) => x.id), hdrs, cond: hit ? JSON.stringify(hit.condition) : '' });
+              } catch (e) { return 'ERR ' + String((e && e.message) || e); }
+            })()`,
+            awaitPromise: true,
+            returnByValue: true,
+          });
+          const dj = String((dnr.result && dnr.result.value) || '');
+          let dobj = {};
+          try { dobj = JSON.parse(dj); } catch (_) {}
+          check(
+            '回环地址下会注册「改写成同源」的请求头规则',
+            !!(dobj.ids || []).includes(9001) && /Origin=http:\/\/127\.0\.0\.1:8188/.test(dobj.hdrs || ''),
+            dj.slice(0, 200)
+          );
+          check(
+            '规则只作用于 xmlhttprequest',
+            /"resourceTypes":\["xmlhttprequest"\]/.test(dobj.cond || ''),
+            (dobj.cond || '').slice(0, 120)
+          );
+
           // ---------- 跨机场景：家里 MacBook 用「单位电脑的局域网 IP」调同一个 ComfyUI ----------
           // 扩展页面是 secure context，而 127.0.0.1 属于 local、不算私网；
           // 一旦填的是 192.168/172.16/10 这类地址，就会落到 Chromium 的

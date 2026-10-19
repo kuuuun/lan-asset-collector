@@ -910,7 +910,7 @@
   async function handle(msg) {
     switch (msg.type) {
       case 'cc:ping':
-        return { ok: true, version: '1.6.4' };
+        return { ok: true, version: '1.6.5' };
 
       case 'cc:toast':
         toast(msg.text || '', msg.kind || '', msg.ms);
