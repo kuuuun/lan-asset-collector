@@ -22,6 +22,20 @@ window.addEventListener('error', (e) => {
 
 /* ---------------- 工具 ---------------- */
 
+/** 跨上下文消息：统一 resolve 成对象，失败也走回调（Promise 形式漏接会变成红字） */
+function sendBg(msg) {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(msg, (res) => {
+        const err = chrome.runtime.lastError;
+        resolve(err ? { error: err.message } : res == null ? {} : res);
+      });
+    } catch (e) {
+      resolve({ error: String((e && e.message) || e) });
+    }
+  });
+}
+
 function flash(text, ok) {
   const el = $('#saveState');
   el.textContent = text;
@@ -51,6 +65,34 @@ function syncModeUI() {
   });
 }
 
+/**
+ * 常用位置下拉：只放「地址字符串」，不另存别名 ——
+ * 换地方时人认的是 IP，加一层别名反而要多维护一份映射。
+ *
+ * 注意：这个函数必须在顶层（syncFormUI 要调它）。放进 bind() 里会因为
+ * 函数作用域而变成「renderProfiles is not defined」（踩过一次）。
+ */
+function renderProfiles() {
+  const sel = $('#comfyProfiles');
+  if (!sel) return;
+  const cur = CC.normalizeComfyUrl(settings.comfy && settings.comfy.baseUrl);
+  const list = (settings.comfy && settings.comfy.profiles) || [];
+  sel.textContent = '';
+  const ph = document.createElement('option');
+  ph.value = '';
+  ph.textContent = list.length ? '（切换常用位置…）' : '（还没存过：填好地址后点右边「存为常用」）';
+  sel.appendChild(ph);
+  list.forEach((u) => {
+    const o = document.createElement('option');
+    o.value = u;
+    o.textContent = u === cur ? u + ' · 当前' : u;
+    sel.appendChild(o);
+  });
+  sel.value = list.indexOf(cur) >= 0 ? cur : '';
+  const del = $('#comfyDelProfile');
+  if (del) del.disabled = !sel.value;
+}
+
 function syncFormUI() {
   $('#davUrl').value = settings.webdav.baseUrl || '';
   $('#davUser').value = settings.webdav.user || '';
@@ -71,6 +113,16 @@ function syncFormUI() {
   $('#skipDuplicate').checked = !!settings.skipDuplicate;
   $('#toastInPage').checked = !!settings.toastInPage;
   $('#minSize').value = settings.minSize;
+
+  const c = settings.comfy || {};
+  $('#comfyUrl').value = c.baseUrl || '';
+  $('#comfyClip').value = c.clipName || '';
+  $('#comfyClipType').value = c.clipType || '';
+  $('#comfyMax').value = c.maxLength || 420;
+  $('#comfyMaxSide').value = Number(c.maxUploadSide) || 0;
+  $('#comfyTimeout').value = Math.round((Number(c.timeout) || 180000) / 1000);
+  $('#comfyInstruction').value = c.instruction || '';
+  renderProfiles();
 
   updatePreview();
 }
@@ -225,6 +277,115 @@ function bind() {
 
   $('#minSize').addEventListener('change', async () => {
     await save({ minSize: Math.max(0, Number($('#minSize').value) || 0) }, true);
+  });
+
+  /* 反推提示词（本地 ComfyUI） */
+  function setComfy(patch, immediate) {
+    const cur = Object.assign({}, settings.comfy, patch);
+    settings.comfy = cur;
+    return save({ comfy: cur }, immediate);
+  }
+
+  /* ---- 常用位置：单位电脑 / 家里 MacBook 来回切 ---- */
+
+  $('#comfySaveProfile').addEventListener('click', async () => {
+    const url = CC.normalizeComfyUrl($('#comfyUrl').value);
+    if (!url) {
+      $('#comfyState').textContent = '✗ 地址填得不对，例如 172.18.23.232:8188';
+      return;
+    }
+    const list = ((settings.comfy && settings.comfy.profiles) || []).filter((x) => x !== url);
+    list.push(url);
+    $('#comfyUrl').value = url;
+    clearTimeout(saveTimer);
+    await setComfy({ baseUrl: url, profiles: list }, true);
+    renderProfiles();
+    flash('已存为常用地址', true);
+  });
+
+  $('#comfyDelProfile').addEventListener('click', async () => {
+    const url = $('#comfyProfiles').value;
+    if (!url) return;
+    const list = ((settings.comfy && settings.comfy.profiles) || []).filter((x) => x !== url);
+    await setComfy({ profiles: list }, true);
+    renderProfiles();
+    flash('已删除', true);
+  });
+
+  $('#comfyProfiles').addEventListener('change', async () => {
+    const url = $('#comfyProfiles').value;
+    if (!url) return;
+    $('#comfyUrl').value = url;
+    clearTimeout(saveTimer);
+    await setComfy({ baseUrl: url }, true);
+    renderProfiles();
+    // 切完立刻测一次：换机器最容易出的就是「地址换了但对方没监听」
+    $('#comfyTest').click();
+  });
+
+  /** 失焦时把地址规范化（补 http:// 与默认端口、去尾斜杠），再刷新常用位置的高亮 */
+  $('#comfyUrl').addEventListener('change', () => {
+    const url = CC.normalizeComfyUrl($('#comfyUrl').value);
+    if (url && url !== $('#comfyUrl').value) {
+      $('#comfyUrl').value = url;
+      setComfy({ baseUrl: url }, true);
+    }
+    renderProfiles();
+  });
+
+  [['#comfyUrl', 'baseUrl'], ['#comfyClip', 'clipName'], ['#comfyClipType', 'clipType']].forEach(([sel, key]) => {
+    $(sel).addEventListener('input', () => setComfy({ [key]: $(sel).value.trim() }));
+  });
+
+  $('#comfyMaxSide').addEventListener('change', () => {
+    const v = Math.max(0, Math.min(4096, Number($('#comfyMaxSide').value) || 0));
+    $('#comfyMaxSide').value = v;
+    setComfy({ maxUploadSide: v }, true);
+  });
+
+  $('#comfyMax').addEventListener('change', () => {
+    setComfy({ maxLength: Math.max(64, Math.min(2048, Number($('#comfyMax').value) || 420)) }, true);
+  });
+
+  $('#comfyTimeout').addEventListener('change', () => {
+    const sec = Math.max(30, Math.min(900, Number($('#comfyTimeout').value) || 180));
+    setComfy({ timeout: sec * 1000 }, true);
+  });
+
+  $('#comfyInstruction').addEventListener('input', () => setComfy({ instruction: $('#comfyInstruction').value }));
+
+  $('#comfyReset').addEventListener('click', async () => {
+    $('#comfyInstruction').value = '';
+    await setComfy({ instruction: '' }, true);
+    flash('已恢复内置的反推指令', true);
+  });
+
+  $('#comfyTest').addEventListener('click', async () => {
+    const state = $('#comfyState');
+    const url = CC.normalizeComfyUrl($('#comfyUrl').value);
+    if (!url) {
+      state.textContent = '✗ 地址填得不对，例如 172.18.23.232:8188';
+      return;
+    }
+    if (url !== $('#comfyUrl').value) $('#comfyUrl').value = url;
+    state.textContent = '正在连接 ' + url + ' …';
+    // 先落盘再测：避免防抖还没走完，测的是旧地址
+    clearTimeout(saveTimer);
+    await setComfy({ baseUrl: url }, true);
+    try {
+      const r = await sendBg({ type: 'comfy:ping' });
+      if (r && r.ok) {
+        const far = !CC.isLoopbackUrl(url);
+        state.textContent =
+          '✓ 已连接' + (far ? '（远程）' : '') +
+          (r.version ? ' · ' + r.version : '') +
+          (r.device ? ' · ' + r.device : '');
+      } else {
+        state.textContent = '✗ ' + ((r && r.error) || '连接失败');
+      }
+    } catch (e) {
+      state.textContent = '✗ ' + String((e && e.message) || e);
+    }
   });
 
   /* 目录授权 */

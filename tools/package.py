@@ -25,14 +25,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
+# 代码里按字符串路径加载的静态资源（如 'studio/studio.html'、'lib/comfy.js'）
+REF_RE = re.compile(
+    r"""['"]((?:[A-Za-z0-9_\-]+/)*[A-Za-z0-9_\-.]+\.(?:html|js|css|png|svg))['"]"""
+)
+
 # 打进包里的顶层条目
 INCLUDE = [
     "manifest.json",
     "background.js",
+    "offscreen.html",
+    "offscreen.js",
     "lib",
     "content",
     "popup",
     "options",
+    "studio",
     "help",
     "assets",
     "tools",
@@ -106,6 +114,20 @@ def check(items):
     for r in refs:
         if r and r not in names and not any(n.startswith(r.rstrip("/") + "/") for n in names):
             problems.append(f"manifest 引用了包内不存在的文件：{r}")
+
+    # manifest 之外还有一类「靠字符串路径加载」的文件（chrome.offscreen 的文档、
+    # studio 页面、getURL 目标等）。它们不在 manifest 里，光靠上面的检查会漏。
+    # 做法：扫包内 .js/.html 里出现的相对路径字面量，若仓库里真有这个文件、却没进包，就报警。
+    for fp, rel in items:
+        if fp.suffix.lower() not in {".js", ".html"}:
+            continue
+        txt = fp.read_text(encoding="utf-8", errors="ignore")
+        for m in REF_RE.finditer(txt):
+            cand = m.group(1)
+            if cand.startswith(("./", "../")):
+                continue
+            if (ROOT / cand).is_file() and cand not in names:
+                problems.append(f"代码里按路径引用了未打进包的文件：{rel} → {cand}")
 
     # 版本号在关键文件里必须一致
     for rel, pattern in [

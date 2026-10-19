@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>素材采集器 · 后台页面</title>
+</head>
+<body>
+<!--
+  这个页面没有界面，只做两件 service worker 里做不了的事：
+  1) 写系统剪贴板（navigator.clipboard 在 SW 里不存在）
+  2) 用 canvas 把大图压成缩略图（工作台列目录时省内存）
+  两件都需要 DOM，所以单独开一个 offscreen document。
+-->
+<script src="offscreen.js"></script>
+</body>
+</html>

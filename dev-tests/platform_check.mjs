@@ -778,6 +778,131 @@ const iconGen = fs.readFileSync(path.join(root, 'tools/make_icons.py'), 'utf8');
 check('tools/make_icons.py 不依赖 Pillow', !/^\s*import\s+PIL|from\s+PIL/m.test(iconGen));
 check('tools/make_icons.py 逐个生成 manifest 声明的所有尺寸', Object.keys(iconDecl).every((s) => new RegExp(`\\b${s}\\b`).test(iconGen)), Object.keys(iconDecl).join(','));
 
+/* ==========================================================================
+ * F. v1.6.0：复制原图 / 素材工作台 / 反推提示词
+ * ========================================================================== */
+
+section('F. v1.6.0 新增能力（剪贴板 / 工作台 / ComfyUI）');
+
+const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
+const bgSrc = read('background.js');
+const comfySrc = read('lib/comfy.js');
+const offSrc = read('offscreen.js');
+
+check('manifest 版本与后台常量一致', manifest.version === '1.6.1', manifest.version);
+
+// 剪贴板：MV3 里唯一稳定的路径是 offscreen + clipboardWrite，两者缺一不可
+check('manifest 申请了 offscreen 权限', (manifest.permissions || []).includes('offscreen'), JSON.stringify(manifest.permissions));
+check('manifest 申请了 clipboardWrite 权限', (manifest.permissions || []).includes('clipboardWrite'));
+check(
+  'minimum_chrome_version ≥ 109（offscreen API 下限）',
+  Number(manifest.minimum_chrome_version) >= 109,
+  manifest.minimum_chrome_version
+);
+
+const NEW_FILES = [
+  'offscreen.html',
+  'offscreen.js',
+  'lib/comfy.js',
+  'studio/studio.html',
+  'studio/studio.css',
+  'studio/studio.js'
+];
+const missing = NEW_FILES.filter((f) => !fs.existsSync(path.join(root, f)));
+check('新增文件齐备', missing.length === 0, missing.join(', '));
+
+check('offscreen 用 ClipboardItem 写图片', /ClipboardItem/.test(offSrc) && /navigator\.clipboard\.write/.test(offSrc));
+check('offscreen 会转 PNG（webp/avif 在剪贴板里不稳）', /image\/png/.test(offSrc));
+check('offscreen 只认 target=offscreen 的消息', /msg\.target\s*!==\s*'offscreen'/.test(offSrc));
+
+// 后台如果把发给 offscreen 的消息当未知指令回执，剪贴板写入会收到错误答案
+check('后台跳过 target=offscreen 的消息', /msg\.target\s*===\s*'offscreen'/.test(bgSrc));
+check('后台有 copy:page 分支', /case 'copy:page'/.test(bgSrc));
+check('后台有 lib:list 分支', /case 'lib:list'/.test(bgSrc));
+check('后台有 comfy:reverse 分支', /case 'comfy:reverse'/.test(bgSrc));
+check('复制走「大图推断」而不是直接拿 src', /cc:image:largest/.test(bgSrc) && /cc:image:largest/.test(read('content/content.js')));
+
+// 列目录必须只列一层：递归会把大目录拖死
+check('工作台只做 Depth:1 列目录', /Depth:\s*'1'/.test(read('lib/webdav.js')) && !/Depth:\s*'infinity'/i.test(read('lib/webdav.js')));
+check('工作台不递归遍历', !/for\s*\(.*values\(\)[\s\S]{0,200}?listFsa\(/.test(read('studio/studio.js')));
+
+// 反推：工作流用 ComfyUI 原生节点，sampling_mode 必须是字符串（传对象会报 missing argument）
+check('反推工作流用 TextGenerate + PreviewAny', /'TextGenerate'/.test(comfySrc) && /'PreviewAny'/.test(comfySrc));
+check('sampling_mode 以字符串传递', /sampling_mode:\s*'off'/.test(comfySrc));
+check('反推指令是 Krea 2 的结构', /Krea 2 Turbo/.test(comfySrc) && /composition and camera/.test(comfySrc));
+check('反推会剥掉模型的开场白', /cleanPromptText/.test(comfySrc));
+check('页面拿得到队列状态（避免看起来卡死）', /comfyQueueInfo/.test(comfySrc) && /comfy:queue/.test(bgSrc));
+
+/* ---- v1.6.1：ComfyUI 地址可以指向另一台机器（家里 MacBook 调单位电脑） ---- */
+
+// 地址规范化的真实函数拿来跑一遍，而不是只看字符串
+const comfySandboxFile = path.join(root, 'lib/comfy.js');
+vm.runInContext(fs.readFileSync(comfySandboxFile, 'utf8'), sandbox, { filename: 'lib/comfy.js' });
+
+check(
+  '地址规范化：只填 IP 也补成完整 URL（http + 默认 8188）',
+  CC.normalizeComfyUrl('172.18.23.232') === 'http://172.18.23.232:8188',
+  CC.normalizeComfyUrl('172.18.23.232')
+);
+check(
+  '地址规范化：保留显式端口与尾部路径（反代场景）',
+  CC.normalizeComfyUrl('https://nas.local/comfy/') === 'https://nas.local/comfy',
+  CC.normalizeComfyUrl('https://nas.local/comfy/')
+);
+check('地址规范化：空值与垃圾输入返回空串', CC.normalizeComfyUrl('   ') === '' && CC.normalizeComfyUrl('') === '');
+check(
+  '能区分本机与远程地址（决定给哪套排查建议）',
+  CC.isLoopbackUrl('127.0.0.1:8188') && CC.isLoopbackUrl('localhost:8188') && !CC.isLoopbackUrl('172.18.23.232:8188')
+);
+check(
+  '远程连不上时给出 --listen / 防火墙 / 隧道 三条',
+  /--listen/.test(comfySrc) && /防火墙/.test(comfySrc) && /隧道/.test(comfySrc)
+);
+
+const storeSrc = read('lib/store.js');
+check('设置里存得下常用位置', /profiles:\s*\[\]/.test(storeSrc) && /comfyProfiles/.test(read('options/options.html')));
+check('设置里有「上传前压到长边」', /maxUploadSide/.test(storeSrc) && /id="comfyMaxSide"/.test(read('options/options.html')));
+check(
+  '反推上传前会按设置压缩（跨网省上行）',
+  /maxUploadSide/.test(bgSrc) && /image:thumb/.test(bgSrc) && /quality: 0\.9/.test(bgSrc)
+);
+check('缩略图函数支持指定质量', /quality/.test(offSrc) && /toDataURL\('image\/jpeg', q\)/.test(offSrc));
+check(
+  '帮助页讲了「用另一台电脑的 ComfyUI」',
+  /用另一台电脑的 ComfyUI/.test(read('help/help.html')) && /--listen 0\.0\.0\.0/.test(read('help/help.html'))
+);
+check('设置页加载了 comfy.js（规范化与判定要用）', /lib\/comfy\.js/.test(read('options/options.html')));
+
+// 三个新页面同样禁止内联脚本
+for (const page of ['studio/studio.html', 'offscreen.html']) {
+  const html = read(page);
+  check(`${page} 无内联 <script>`, !/<script(?![^>]*\bsrc=)[^>]*>/i.test(html));
+  check(`${page} 无 onclick=`, !/\son\w+\s*=/i.test(html));
+}
+
+// 打包白名单必须覆盖所有会被扩展加载的顶层条目// （v1.6.0 首发时白名单漏了 offscreen.* 与 studio/ → zip 里少了 5 个文件，
+//   而 manifest 只声明 background/popup/options，查不出来。这里先红。）
+const pkgSrc = read('tools/package.py');
+for (const entry of ['manifest.json', 'background.js', 'offscreen.html', 'offscreen.js',
+                     'lib', 'content', 'popup', 'options', 'studio', 'help', 'assets']) {
+  check(`打包白名单含 ${entry}`, new RegExp(`"${entry.replace(/\./g, '\\.')}"`).test(pkgSrc));
+}
+check('打包会抓「按路径加载」的漏项', /代码里按路径引用了未打进包的文件/.test(pkgSrc));
+
+// 版本号五处一致（package.py 也查，这里先红，免得打包时才发现）
+const VERSION_SPOTS = [
+  ['manifest.json', /"version"\s*:\s*"([\d.]+)"/],
+  ['background.js', /const VERSION = '([\d.]+)'/],
+  ['popup/popup.html', /id="ver">v([\d.]+)</],
+  ['content/content.js', /version:\s*'([\d.]+)'/],
+  ['help/help.html', /版本 ([\d.]+) ·/]
+];
+const versions = VERSION_SPOTS.map(([f, re]) => {
+  const m = read(f).match(re);
+  return { f, v: m ? m[1] : '(未找到)' };
+});
+check('版本号五处一致', new Set(versions.map((x) => x.v)).size === 1, versions.map((x) => `${x.f}=${x.v}`).join(' · '));
+
 /* ========================================================================== */
 
 console.log(`\n${'='.repeat(52)}`);

@@ -169,6 +169,79 @@
     <p class="tip">小于该边长的图片不会被批量采集选中，用于过滤图标、占位图。</p>
   </section>
 
+  <!-- ============ 反推提示词 ============ -->
+  <section class="card">
+    <h2>反推提示词 <span class="tag">本地 ComfyUI</span></h2>
+    <p class="desc">
+      给一张图，让 <strong>Qwen3-VL 4B</strong>（Krea 2 的文本编码器，ComfyUI 里通常已有）
+      按 Krea 2 Turbo 的提示词结构写词。图片只会发到<strong>你填的那台 ComfyUI</strong>，
+      默认是本机；也可以填另一台机器的地址 —— 例如在家里用 MacBook 调单位电脑上的 ComfyUI。
+    </p>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="comfyUrl">ComfyUI 地址</label>
+        <input type="text" id="comfyUrl" placeholder="127.0.0.1:8188">
+        <p class="tip">可以只填 IP，端口默认 8188。跨机时填对方的局域网地址或隧道地址。</p>
+      </div>
+      <div class="field">
+        <label for="comfyTimeout">单张超时（秒）</label>
+        <input type="number" id="comfyTimeout" min="30" max="900" step="10">
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="comfyProfiles">常用位置（单位电脑 / 家里来回切，选中即生效）</label>
+      <div class="row">
+        <select id="comfyProfiles" style="flex:1 1 260px;width:auto"></select>
+        <button class="btn" id="comfySaveProfile" type="button">存为常用</button>
+        <button class="btn" id="comfyDelProfile" type="button">删除</button>
+      </div>
+      <p class="tip">存下来以后，换地方只要在下面选一下，不用再记 IP。</p>
+    </div>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="comfyClip">视觉模型文件（CLIPLoader 里选的那个）</label>
+        <input type="text" id="comfyClip" placeholder="qwen3vl_4b_fp8_scaled.safetensors">
+      </div>
+      <div class="field">
+        <label for="comfyClipType">加载类型（CLIPLoader 的 type）</label>
+        <input type="text" id="comfyClipType" placeholder="krea2">
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="comfyMax">提示词长度上限（token）</label>
+        <input type="number" id="comfyMax" min="64" max="2048" step="16">
+      </div>
+      <div class="field">
+        <label for="comfyMaxSide">上传前压到长边（px，0 = 不压）</label>
+        <input type="number" id="comfyMaxSide" min="0" max="4096" step="128" placeholder="0">
+        <p class="tip">跨机（家里传单位）建议 1536：视觉模型看这么大就够，上行能省一大半。</p>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="comfyInstruction">反推指令（整段可改，留空用内置的 Krea 2 结构）</label>
+      <textarea id="comfyInstruction" rows="9" spellcheck="false" placeholder="留空即使用内置指令"></textarea>
+    </div>
+
+    <div class="row">
+      <button class="btn" id="comfyTest">测试 ComfyUI</button>
+      <button class="btn" id="comfyReset">恢复内置指令</button>
+      <span class="tip" id="comfyState" style="margin:0"></span>
+    </div>
+
+    <p class="tip">
+      工作流是 ComfyUI <strong>原生节点</strong>，不需要装插件：
+      <code>LoadImage → CLIPLoader → TextGenerate（带 image）→ PreviewAny</code>。
+      若模型文件名或 type 与本机不一致，测试会直接报错，按上面的值改即可。
+      提示词在「素材工作台」里生成 —— 选中任意一张图点「反推提示词」。
+    </p>
+  </section>
+
   <!-- ============ 统计 ============ -->
   <section class="card">
     <h2>统计</h2>
@@ -212,6 +285,7 @@
 <script src="../lib/store.js"></script>
 <script src="../lib/webdav.js"></script>
 <script src="../lib/saver.js"></script>
+<script src="../lib/comfy.js"></script>
 <script src="options.js"></script>
 </body>
 </html>

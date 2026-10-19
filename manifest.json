@@ -1,16 +1,18 @@
 {
   "manifest_version": 3,
   "name": "素材采集器 · LAN Collector",
-  "version": "1.5.9",
+  "version": "1.6.1",
   "description": "在图片上右键一键剪藏，或区域截图 / 可视区截图 / 整页滚动截图 / 批量采集，直接保存到 NAS 或本机目录，不经过第三方素材库软件。",
-  "minimum_chrome_version": "102",
+  "minimum_chrome_version": "109",
   "permissions": [
     "tabs",
     "activeTab",
     "scripting",
     "storage",
     "contextMenus",
-    "notifications"
+    "notifications",
+    "offscreen",
+    "clipboardWrite"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {

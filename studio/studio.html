@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>素材工作台 · 素材采集器</title>
+<link rel="stylesheet" href="studio.css">
+</head>
+<body>
+<header class="head">
+  <div class="brand">
+    <img src="../assets/icons/48.png" alt="">
+    <div>
+      <h1>素材工作台 <span class="ver" id="ver">v1.6.1</span></h1>
+      <p id="targetText">正在读取保存位置…</p>
+    </div>
+  </div>
+  <div class="head-actions">
+    <button class="pill" id="comfyPill" title="点击重新检测本地 ComfyUI">
+      <i></i><span id="comfyText">ComfyUI 检测中…</span>
+    </button>
+    <button class="btn" id="refreshBtn">刷新</button>
+    <button class="btn" id="optionsBtn">设置</button>
+  </div>
+</header>
+
+<div class="bar">
+  <nav class="crumbs" id="crumbs"></nav>
+  <input type="search" id="filter" placeholder="按文件名过滤…" autocomplete="off">
+  <span class="count" id="count"></span>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<main class="stage">
+  <section class="grid" id="grid"></section>
+  <section class="empty" id="empty" hidden>
+    <strong id="emptyTitle">这个目录里还没有图片</strong>
+    <span id="emptyDesc">用扩展采几张之后回来刷新即可；也可以点上面的文件夹进下一层。</span>
+  </section>
+</main>
+
+<aside class="panel" id="panel" hidden>
+  <div class="panel-head">
+    <strong id="selName">未选择</strong>
+    <button class="icon" id="closePanel" title="关闭">×</button>
+  </div>
+
+  <div class="preview"><img id="selImg" alt=""></div>
+  <div class="meta" id="selMeta"></div>
+
+  <div class="actions">
+    <button class="btn primary" id="copyBtn">复制图片</button>
+    <button class="btn" id="revBtn">反推提示词</button>
+    <button class="btn" id="openBtn">打开原图</button>
+  </div>
+
+  <section class="rev" id="revBox" hidden>
+    <div class="rev-head">
+      <span id="revStatus">等待中…</span>
+      <span class="rev-time" id="revTime"></span>
+    </div>
+    <textarea id="revText" spellcheck="false" placeholder="反推结果会出现在这里，可以直接改"></textarea>
+    <div class="rev-actions">
+      <button class="btn primary" id="copyRev">复制提示词</button>
+      <button class="btn" id="againRev">重新反推</button>
+    </div>
+    <p class="tip">提示词按 Krea 2 Turbo 的结构生成（主体 → 细节 → 构图 → 环境 → 光线 → 风格）。可在设置页改指令模板。</p>
+  </section>
+</aside>
+
+<script src="../lib/util.js"></script>
+<script src="../lib/store.js"></script>
+<script src="../lib/webdav.js"></script>
+<script src="../lib/saver.js"></script>
+<script src="studio.js"></script>
+</body>
+</html>

@@ -2,11 +2,11 @@
  * 素材采集器 · 后台服务（MV3 service worker）
  * 负责：快捷键 / 右键菜单 / 截屏编排 / 整页拼接调度 / 统一落盘
  */
-importScripts('lib/util.js', 'lib/store.js', 'lib/webdav.js', 'lib/saver.js');
+importScripts('lib/util.js', 'lib/store.js', 'lib/webdav.js', 'lib/saver.js', 'lib/comfy.js');
 
 const CC = self.CC;
 
-const VERSION = '1.5.9';
+const VERSION = '1.6.1';
 const CAPTURE_GAP = 320; // 两次 captureVisibleTab 之间的最小间隔（配额：2 次/秒）
 
 /* ================= 平台信息 =================
@@ -647,7 +647,211 @@ async function singleSave(tab, payload) {
   });
 }
 
+/* ================= 剪贴板（offscreen） ================= */
+
+/**
+ * MV3 的 service worker 里没有 DOM，也没有 navigator.clipboard —— 写图片到剪贴板
+ * 必须借一个 offscreen document。这是唯一在扩展里能稳定写**图片**（而不是图片地址）
+ * 的路径；页面内容脚本那条路要用户手势，右键/弹窗触发时手势早已丢失。
+ */
+let offscreenReady = null;
+
+async function ensureOffscreen() {
+  if (!chrome.offscreen) throw new Error('当前浏览器不支持后台剪贴板（需 Chromium 109+）');
+  if (offscreenReady) {
+    try {
+      await offscreenReady;
+      return;
+    } catch (_) {
+      offscreenReady = null;
+    }
+  }
+  offscreenReady = (async () => {
+    try {
+      await chrome.offscreen.createDocument({
+        url: 'offscreen.html',
+        reasons: ['CLIPBOARD', 'BLOBS'],
+        justification: '把图片写入系统剪贴板，并把大图压成工作台用的缩略图'
+      });
+    } catch (e) {
+      // 已经存在时 createDocument 会报「Only a single offscreen document may be created」
+      const m = String((e && e.message) || e);
+      if (!/single offscreen|already exists/i.test(m)) throw e;
+    }
+    return true;
+  })();
+  await offscreenReady;
+}
+
+function toOffscreen(msg) {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(Object.assign({ target: 'offscreen' }, msg), (res) => {
+        const err = chrome.runtime.lastError;
+        resolve(err ? { ok: false, error: err.message } : res || { ok: false, error: '后台页面没有响应' });
+      });
+    } catch (e) {
+      resolve({ ok: false, error: String((e && e.message) || e) });
+    }
+  });
+}
+
+/** 把 dataURL 写进剪贴板，返回真实像素尺寸 —— 让用户能判断拿到的是原图还是缩略图 */
+async function clipboardImage(dataUrl) {
+  await ensureOffscreen();
+  const r = await toOffscreen({ type: 'clipboard:image', dataUrl });
+  if (!r || !r.ok) return { ok: false, error: (r && r.error) || '写入剪贴板失败' };
+  return { ok: true, w: r.w, h: r.h, bytes: r.bytes };
+}
+
+/**
+ * 弹窗「复制原图」：取本页最大的那张图，尽量拿原图。
+ * 与右键剪藏同一套取图逻辑（bigSourceOf 推算 + 失败退回页面那张），
+ * 区别只在于结果是进剪贴板而不是进 NAS。
+ */
+async function copyPageImage(tabArg) {
+  const tab = tabArg && tabArg.id != null ? tabArg : await activeTab();
+  const bad = guard(tab);
+  if (bad) return { ok: false, error: bad };
+  if (!(await ensureContent(tab))) return { ok: false, error: '当前页面不允许注入采集器' };
+
+  const pick = await cc(tab.id, { type: 'cc:image:largest' });
+  if (!pick || pick.error || !pick.url) return { ok: false, error: (pick && pick.error) || '本页没有找到图片' };
+
+  let fetched = await fetchForClip(tab, pick.url);
+  let via = 'large';
+  if (!fetched.ok && pick.alt) {
+    fetched = await fetchForClip(tab, pick.alt);
+    via = 'fallback';
+  }
+  if (!fetched.ok) return { ok: false, error: fetched.error || '图片抓取失败' };
+
+  const r = await clipboardImage(CC.bytesToDataUrl(fetched.bytes, fetched.mime));
+  return Object.assign(r, {
+    via,
+    mime: fetched.mime,
+    gotBytes: fetched.bytes.length,
+    pageW: pick.w,
+    pageH: pick.h
+  });
+}
+
+/** 工作台里复制（图片来自 NAS 或本地授权目录，调用方直接给 dataURL） */
+async function copyFromData(dataUrl, url) {
+  let bytes = null;
+  let mime = 'image/png';
+  if (dataUrl) {
+    bytes = CC.dataUrlToBytes(dataUrl);
+    mime = CC.mimeFromDataUrl(dataUrl);
+  } else if (url) {
+    const s = await CC.getSettings();
+    let got = await CC.fetchImageBytes(url, 30000);
+    if (!got.ok && s.mode === 'webdav') got = await CC.webdavGetBytes(s.webdav, url, 30000);
+    if (!got.ok) return { ok: false, error: got.error || '读取图片失败' };
+    bytes = got.bytes;
+    mime = got.mime;
+  }
+  if (!bytes) return { ok: false, error: '没有图片数据' };
+  return await clipboardImage(CC.bytesToDataUrl(bytes, mime));
+}
+
+/* ================= 素材工作台：列目录 / 缩略图 ================= */
+
+/**
+ * 只列**一级**目录。刻意不递归：素材目录下动辄上万张图，递归一次能把
+ * 浏览器和 NAS 一起拖住；工作台是「进到哪层看哪层」，点文件夹再列下一层，
+ * 这也正好对上「扫描只针对当前选择的目录」这条要求。
+ */
+async function libList(relPath) {
+  const s = await CC.getSettings();
+  if (s.mode !== 'webdav') {
+    return { ok: false, error: '目录授权模式由工作台页面直接读取（不需要后台）', fsa: true };
+  }
+  return await CC.webdavList(s.webdav, relPath || '');
+}
+
+/** 缩略图缓存：url → dataURL。列表来回滚动时不用反复从 NAS 拉原图 */
+const thumbCache = new Map();
+
+async function libThumb(url) {
+  if (!url) return { ok: false, error: '没有图片地址' };
+  if (thumbCache.has(url)) return { ok: true, dataUrl: thumbCache.get(url), cached: true };
+
+  const s = await CC.getSettings();
+  let got;
+  if (s.mode === 'webdav') got = await CC.webdavGetBytes(s.webdav, url, 30000);
+  else got = await CC.fetchImageBytes(url, 30000);
+  if (!got.ok) return got;
+
+  await ensureOffscreen();
+  const t = await toOffscreen({ type: 'image:thumb', dataUrl: CC.bytesToDataUrl(got.bytes, got.mime), max: 460 });
+  if (!t || !t.ok) return { ok: false, error: (t && t.error) || '缩略图生成失败' };
+
+  if (thumbCache.size > 180) thumbCache.clear();
+  thumbCache.set(url, t.dataUrl);
+  return { ok: true, dataUrl: t.dataUrl, w: t.w, h: t.h };
+}
+
+/* ================= 反推提示词（本地 ComfyUI） ================= */
+
+async function comfyReverse(payload) {
+  const s = await CC.getSettings();
+  const cfg = s.comfy || {};
+
+  let bytes = null;
+  let mime = 'image/png';
+  if (payload && payload.dataUrl) {
+    bytes = CC.dataUrlToBytes(payload.dataUrl);
+    mime = CC.mimeFromDataUrl(payload.dataUrl);
+  } else if (payload && payload.url) {
+    let got = await CC.fetchImageBytes(payload.url, 30000);
+    if (!got.ok && s.mode === 'webdav') got = await CC.webdavGetBytes(s.webdav, payload.url, 30000);
+    if (!got.ok) return { ok: false, error: got.error || '读取图片失败' };
+    bytes = got.bytes;
+    mime = got.mime;
+  }
+  if (!bytes) return { ok: false, error: '没有图片数据' };
+
+  // 跨机反推（家里 MacBook → 单位电脑）时，原图动辄十几 MB，家里上行根本传不动，
+  // 也没必要 —— 视觉模型看长边 1536 就够。maxUploadSide>0 时先压一版再上传。
+  // 压缩失败不阻断：宁可传原图，也不能因为省流量把功能弄挂。
+  const side = Math.max(0, Math.min(4096, Number(cfg.maxUploadSide) || 0));
+  let uploaded = { bytes: bytes.length, mime, shrunk: false };
+  if (side > 0) {
+    try {
+      await ensureOffscreen();
+      const r = await toOffscreen({
+        type: 'image:thumb',
+        dataUrl: CC.bytesToDataUrl(bytes, mime),
+        max: side,
+        quality: 0.9,
+      });
+      if (r && r.ok && r.dataUrl) {
+        const small = CC.dataUrlToBytes(r.dataUrl);
+        if (small && small.length && small.length < bytes.length) {
+          uploaded = { bytes: small.length, mime: 'image/jpeg', shrunk: true, w: r.w, h: r.h, before: bytes.length };
+          bytes = small;
+          mime = 'image/jpeg';
+        }
+      }
+    } catch (_) {
+      /* 压不动就用原图 */
+    }
+  }
+
+  const instruction = (payload && payload.instruction) || cfg.instruction || CC.KREA2_INSTRUCTION;
+  const started = Date.now();
+  try {
+    const text = await CC.comfyReverse(cfg, bytes, mime, instruction);
+    if (!text || !text.trim()) return { ok: false, error: 'ComfyUI 返回了空文本' };
+    return { ok: true, text, ms: Date.now() - started, uploaded };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
 /* ================= 入口分发 ================= */
+
 
 /**
  * Pinterest 大图采集（由弹窗的「采集本页大图」按钮触发）。
@@ -748,6 +952,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
+  // 发给 offscreen 文档的消息会同时到达这里；不接也不回，让专门的监听器去处理。
+  // 一旦这里回了「未知指令」，剪贴板写入就会收到一个错误答案。
+  if (msg.target === 'offscreen') return;
 
   const done = (p) =>
     Promise.resolve(p)
@@ -772,6 +979,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // 弹窗触发时 sender.tab 是 undefined（消息来自扩展自身页面）——
       // collectPin 内部会退回 chrome.tabs.query 找活动标签页
       done(collectPin(sender.tab));
+      return true;
+
+    case 'copy:page':
+      // 弹窗「复制原图」：复制的必须是原图字节，不是页面渲染的那张缩略图
+      done(copyPageImage(sender.tab));
+      return true;
+
+    case 'copy:image':
+      done(copyFromData(msg.dataUrl, msg.url));
+      return true;
+
+    case 'lib:list':
+      done(libList(msg.path || ''));
+      return true;
+
+    case 'lib:thumb':
+      done(libThumb(msg.url));
+      return true;
+
+    case 'comfy:ping':
+      done(
+        CC.getSettings().then((s) => CC.comfyPing(s.comfy || {}))
+      );
+      return true;
+
+    case 'comfy:reverse':
+      // 本地推理可能要十几秒到几分钟：消息不关，等结果回来再回执
+      done(comfyReverse(msg));
+      return true;
+
+    case 'comfy:queue':
+      done(CC.getSettings().then((s) => CC.comfyQueueInfo(s.comfy || {})));
       return true;
 
     case 'status':

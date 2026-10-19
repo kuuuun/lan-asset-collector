@@ -147,6 +147,36 @@ html, body {
 
 .wide + .wide { margin-top: 9px; }
 
+/* ---------- 复制原图 / 素材工作台 ---------- */
+
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+
+.mini {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 40px;
+  border: 1px solid #e3e8ef;
+  border-radius: 9px;
+  background: #fff;
+  color: #334155;
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, transform 0.08s;
+}
+
+.mini:hover { border-color: #bfdbfe; background: #f7fafe; }
+.mini:active { transform: scale(0.99); }
+.mini[disabled] { opacity: 0.55; cursor: default; }
+.mini svg { width: 17px; height: 17px; color: #3b82f6; }
+
 kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 10.5px;

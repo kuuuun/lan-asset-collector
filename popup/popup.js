@@ -159,6 +159,41 @@ document.querySelectorAll('[data-link]').forEach((btn) => {
   });
 });
 
+/* ---------------- 复制原图 / 素材工作台 ---------------- */
+
+/**
+ * 复制原图。
+ *
+ * 这里刻意回报「真实像素 + 字节数」：站点普遍把缩略图放在 src、
+ * 浏览器自带的「复制图片」复制的就是那张缩略图。要让 K 一眼看出
+ * 这次拿到的是原图还是退回来的页面版本，所以失败回退时也明说。
+ */
+$('#copyImg') &&
+  $('#copyImg').addEventListener('click', async () => {
+    const btn = $('#copyImg');
+    btn.disabled = true;
+    setHint('正在读取原图…');
+    try {
+      const r = await send({ type: 'copy:page' });
+      if (r && r.ok) {
+        const px = r.w && r.h ? r.w + '×' + r.h : '';
+        const size = fmtSize(r.bytes);
+        const tail = r.via === 'fallback' ? '（原图不可达，已复制页面版本）' : '';
+        setHint(`已复制 ${px}${px ? ' · ' : ''}${size}${tail}`, 'ok');
+      } else {
+        setHint('复制失败：' + brief((r && r.error) || '未知错误', 40), 'err');
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+$('#openStudio') &&
+  $('#openStudio').addEventListener('click', () => {
+    fire(chrome.tabs.create({ url: chrome.runtime.getURL('studio/studio.html') }));
+    window.close();
+  });
+
 /* ---------------- 右键菜单自检 / 重新注册 ---------------- */
 
 /**

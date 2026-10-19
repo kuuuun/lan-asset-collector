@@ -758,6 +758,46 @@
     return { url: page, alt: page };
   }
 
+  /* ================= 本页最大图 ================= */
+
+  /**
+   * 「本页最大的那张图」—— 弹窗里的「复制原图」用。
+   *
+   * 关键是不能拿 img.src：站点普遍把缩略图放在 src、把大图藏在 srcset/自定义属性里
+   * （Pinterest 的 src 全是 236x）。所以先按**渲染出来的面积**挑出主角，再交给
+   * bigSourceOf 逆推大图地址；尺寸回报的是 naturalWidth/Height（真实像素，
+   * 用户一眼就能看出拿到的到底是不是原图）。
+   */
+  function largestImage() {
+    let best = null;
+    let bestScore = 0;
+    for (const img of document.images) {
+      if (!isVisible(img)) continue;
+      const nw = img.naturalWidth || 0;
+      const nh = img.naturalHeight || 0;
+      const r = img.getBoundingClientRect();
+      const w = nw || Math.round(r.width);
+      const h = nh || Math.round(r.height);
+      if (w < 64 || h < 64) continue; // 略过图标、间隔图、追踪像素
+      const score = w * h;
+      if (score > bestScore) {
+        bestScore = score;
+        best = img;
+      }
+    }
+    if (!best) return { error: '本页没有可见的图片' };
+
+    const pick = bigSourceOf(best);
+    if (!pick || !pick.url) return { error: '这张图的地址读不到（可能是 canvas 或受保护资源）' };
+    return {
+      ok: true,
+      url: pick.url,
+      alt: pick.alt && pick.alt !== pick.url ? pick.alt : '',
+      w: best.naturalWidth || 0,
+      h: best.naturalHeight || 0
+    };
+  }
+
   /* ================= Alt + 右键 ================= */
 
   document.addEventListener(
@@ -821,7 +861,7 @@
   async function handle(msg) {
     switch (msg.type) {
       case 'cc:ping':
-        return { ok: true, version: '1.5.9' };
+        return { ok: true, version: '1.6.1' };
 
       case 'cc:toast':
         toast(msg.text || '', msg.kind || '', msg.ms);
@@ -864,6 +904,9 @@
 
       case 'pin:scan':
         return pinScan();
+
+      case 'cc:image:largest':
+        return largestImage();
 
       default:
         return { error: '未知指令 ' + msg.type };

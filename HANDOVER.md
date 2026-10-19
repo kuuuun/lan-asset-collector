@@ -1,7 +1,7 @@
 # 交接说明 · 素材采集器（LAN Collector）
 
 > 交接对象：接手维护这个扩展的开发者。
-> 当前版本 **v1.5.9**，交接日期 **2026-10-10**（v1.5.8 / v1.5.9 变更补充于 2026-10-12）。
+> 当前版本 **v1.6.1**，交接日期 **2026-10-10**（v1.5.8 / v1.5.9 补充于 2026-10-12，v1.6.0 / v1.6.1 补充于 2026-10-19）。
 > 这份文件只讲「怎么接手、别踩哪些坑」，功能怎么用看 [README.md](README.md)。
 
 ---
@@ -11,11 +11,11 @@
 | 项 | 内容 |
 |---|---|
 | 是什么 | Chromium 内核浏览器扩展（MV3），仿 Billfish 采集器的采集动作，但**不写入任何素材库软件**，直接把截图 / 网页图片落进局域网目录 |
-| 干什么用 | 图片右键一键剪藏、区域截图、可视区截图、整页滚动截图、批量采集 → 直接存到群晖 NAS |
+| 干什么用 | 图片右键一键剪藏、区域截图、可视区截图、整页滚动截图、批量采集 → 直接存到群晖 NAS；v1.6.0 起还能**复制原图到剪贴板**、在**素材工作台**里扫描当前目录、用**本地 ComfyUI 反推 Krea 2 提示词** |
 | 落盘通道 | 默认 **WebDAV 直传**（零部署，NAS 自带 5005 端口就是服务端）；备用 **浏览器目录授权**（FSA） |
 | 目标目录 | `http://192.168.31.206:5005/Works/PicStorage/clips`（群晖 DSM，本机映射为 `Z:\PicStorage\clips`） |
-| 代码量 | 扩展本体 ~2,800 行（JS/CSS/HTML），验证脚本 ~1,500 行（`dev-tests/`，不打包） |
-| 依赖 | **运行时零依赖**（没有 npm、没有构建步骤）；开发期验证需要 Node + 可选 Python/wsgidav |
+| 代码量 | 扩展本体 ~3,900 行（JS/CSS/HTML），验证脚本 ~1,900 行（`dev-tests/`，不打包） |
+| 依赖 | **运行时零依赖**（没有 npm、没有构建步骤）；反推提示词需要一个跑着的**本地 ComfyUI**（可选功能） |
 | 目标浏览器 | 夸克（K 的主力）、Chrome、Edge —— 同一份代码，无平台分支 |
 | 交付物 | `python tools/package.py` → 上一级目录的 `lan-asset-collector-v<版本>.zip` |
 
@@ -50,16 +50,19 @@
 
 ```
 manifest.json          MV3 清单。权限：tabs / activeTab / scripting / storage /
-                       contextMenus / notifications + <all_urls> host 权限
-background.js  (790)   service worker：菜单注册、快捷键、截屏编排、整页拼接调度、消息总线
-lib/util.js    (285)   模板渲染 + 路径清洗（三平台并集规则）+ 哈希 + 各类解析
-lib/store.js   (184)   设置读写（chrome.storage.local）+ IndexedDB（目录句柄/去重指纹/序号）
-lib/webdav.js  (230)   WebDAV 客户端：探测 / 逐级 MKCOL / PUT（含同名保护）
+                       contextMenus / notifications / offscreen / clipboardWrite + <all_urls>
+background.js  (1,050) service worker：菜单注册、快捷键、截屏编排、整页拼接调度、消息总线、剪贴板与 ComfyUI 编排
+lib/util.js    (300)   模板渲染 + 路径清洗（三平台并集规则）+ 哈希 + 字节↔dataURL + 各类解析
+lib/store.js   (200)   设置读写（chrome.storage.local）+ IndexedDB（目录句柄/去重指纹/序号）
+lib/webdav.js  (390)   WebDAV 客户端：探测 / 逐级 MKCOL / PUT（含同名保护）/ **列目录（Depth:1）** / 取字节
 lib/saver.js   (211)   保存层：通道分发（webdav / fsa）+ 目标校验 + 取图
 lib/imageproc.js(118)  页面内 Canvas 处理：裁剪 / 格式转换 / 整页拼接（跑在内容脚本里）
-content/content.js(883) 区域选框、Alt+右键（大图推断）、批量面板、整页滚屏与拼接、页内提示
-popup/         功能面板（对齐 Billfish 布局，含右键菜单状态自检行）
-options/       设置页
+lib/comfy.js   (230)   **ComfyUI 客户端**：ping / upload / 排队 / 轮询 / 取文本 + Krea 2 反推指令
+offscreen.html/.js     **offscreen 文档**：写系统剪贴板、把大图压成缩略图（SW 里没有 DOM）
+content/content.js(930) 区域选框、Alt+右键（大图推断）、批量面板、整页滚屏与拼接、页内提示、**本页最大图**
+popup/         功能面板（对齐 Billfish 布局，含右键菜单状态自检行、复制原图、素材工作台入口）
+studio/        **素材工作台**：只扫当前目录、缩略图墙、复制图片 / 反推提示词 / 打开原图
+options/       设置页（含反推提示词的 ComfyUI 配置）
 help/          使用说明页
 assets/icons/  16/32/48/128 图标，由 tools/make_icons.py 生成
 tools/         make_icons.py（纯标准库生成 PNG）、package.py（校验 + 打包）
@@ -76,7 +79,16 @@ dev-tests/     四套验证脚本，永不打包
 | | `singleSave` / `batchSave` | 单图 / 批量落盘入口。`singleSave` 支持 **`fallbackUrl`**：首选地址（多为推算出来的大图）抓失败就退到它再抓一次 |
 | | `captureRegion` / `captureViewport` / `captureFullPage` | 三种截屏编排 |
 | | `persist(tab, dataUrl, type, extra)` | 统一的「转码 → 命名 → 写盘 → 计数 → 通知」出口 |
+| | `copyPageImage(tab)` | **复制原图**：`cc:image:largest` 找主角 → `fetchForClip` 取字节 → offscreen 写剪贴板 |
+| | `ensureOffscreen` / `toOffscreen` | 按需拉起 offscreen 文档（剪贴板 / 缩略图），失败信息要能落到界面 |
+| | `libList` / `libThumb` | **工作台**：列一层目录 / 出缩略图（缓存 180 条） |
+| | `comfyReverse(payload)` | **反推**：取图（跨机时先压到 `maxUploadSide`）→ 上传 → 排队 → 等文本，返回 `{text, ms, uploaded}` |
 | | `silent(p)` | 包住 Promise 形式的 `chrome.*` 调用（**try/catch 抓不住 Promise 拒绝**，见第五节） |
+| `lib/comfy.js` | `CC.comfyReverse` | 上传 + 工作流 + 轮询；空结果 / **回显指令**都自动重试一次（见第四节第 12、15 条） |
+| | `CC.normalizeComfyUrl` / `CC.isLoopbackUrl` | **地址规范化**（裸 IP 补 `http://` 与 8188，https 不补端口）/ 判定是否本机（决定给哪套排查建议） |
+| | `CC.buildReverseWorkflow` | 固定 4 节点工作流，**`sampling_mode` 传字符串** |
+| `lib/webdav.js` | `CC.webdavList` | **Depth:1** 列目录（不引 DOMParser，后台也能用） |
+| | `CC.webdavGetBytes` | 带 Basic 鉴权取图（缩略图 / 反推取图） |
 | `lib/util.js` | `CC.cleanSeg` / `CC.cleanDirSeg` | **文件名段**（空则兜底 `untitled`）vs **目录段**（空则丢弃）—— 语义不同，别合并 |
 | | `CC.pinimgOriginal(url)` | Pinterest CDN 地址 → `originals` 原图；非 pinimg 域名返回空串（当判据用） |
 | | `CC.sanitizeRelPath(p)` | 把模板算出的相对路径逐段清洗 |
@@ -213,6 +225,91 @@ K 明确要求「不要鼠标悬停采集」。原来它会在**每个含图片�
    `singleSave` 的 `fallbackUrl` 兜底 —— 与 `collectPin()` 是同一套「先原图、失败退回」的思路。
    返回的 `{ url, alt }` 里 `alt` 就是那个退路，别把它丢掉。
 
+### 10. 「复制原图」不进右键菜单（v1.6.0）
+
+第 1 条同样适用于它。复制图片放在**弹窗按钮**与**素材工作台**里，右键菜单依旧只有 `cc-image` 一项。
+将来谁想加「复制图片」到右键，先读第 1 条：加进去就会把一键剪藏变成两次点击。
+
+### 11. 剪贴板只能走 offscreen document（v1.6.0）
+
+- MV3 的 service worker **没有 DOM，也没有 `navigator.clipboard`** —— 想在扩展里把**图片字节**
+  写进剪贴板，唯一稳定的路径是 `chrome.offscreen.createDocument({ reasons:['CLIPBOARD','BLOBS'] })`
+  再在 offscreen 文档里 `new ClipboardItem({'image/png': blob})` + `navigator.clipboard.write()`
+- 需要 `offscreen` + `clipboardWrite` 两个权限，且 `minimum_chrome_version` 必须 ≥ **109**
+- **发给 offscreen 的消息同时会到达 background 的 `onMessage`**。后台必须先
+  `if (msg.target === 'offscreen') return;` —— 否则它会回一句「未知指令」，
+  剪贴板写入收到的是这个错误答案，表现为「复制没反应但也不报错」
+- 内容脚本那条路（页面里 `navigator.clipboard.write`）**不要用**：右键/弹窗触发时用户手势早已丢失，
+  会被 Chromium 拒绝
+- 统一转 PNG 再写：`image/webp`、`image/avif` 在剪贴板里有内核差异
+
+### 12. 反推提示词用 ComfyUI 原生节点，别装第三方包（v1.6.0）
+
+工作流固定为：
+
+```
+LoadImage → CLIPLoader(qwen3vl_4b_fp8_scaled, type=krea2) → TextGenerate(image=…) → PreviewAny
+```
+
+三个坑，都踩过：
+
+1. **`sampling_mode` 在 API 里必须传字符串**（`"off"`）。TextGenerate 的 sampling_mode 是
+   `DynamicCombo`，传成 `{ sampling_mode: "off" }` 会让 `execute()` 报
+   「missing 1 required positional argument: 'sampling_mode'」。
+2. **`max_length` 太小会拿到空字符串**（贪心解码直接 EOS）。默认给 420；
+   `CC.comfyReverse` 在空结果时会自动放宽到 ≥600 并追加一句「直接开写」再试一次，
+   仍为空才报错 —— 报错文案要指回「提示词长度上限」这个设置项。
+3. **`system_prompt` 是 `force_input`**（UI 里必须连线），API 里别传；指令一律写进 `prompt`，
+   靠 `use_default_template: true` 套模型的聊天模板。
+
+反推与出图**共用同一个队列**：K 在跑图时反推会排队。所以 `comfyWait` 每 2.5 秒读一次 `/queue`，
+工作台把它显示成「队列：运行 N / 等待 M」—— 不显示的话界面就是一个不动的转圈，看起来像卡死。
+另外工作台在等待期间每 3 秒发一次 `comfy:queue`，顺带起到**保活 service worker** 的作用（长任务必需）。
+
+### 13. 素材工作台只列一层，永不递归（v1.6.0）
+
+`CC.webdavList()` 固定 `Depth: 1`。素材目录动辄上万张图，递归一次能把浏览器和 NAS 一起拖住；
+「进到哪层看哪层」既是性能考虑，也正好对上 K 的要求「扫描只针对当前选择的目录」。
+缩略图走 `lib:thumb`（后台取字节 → offscreen 压到长边 460px → JPEG），缓存上限 180 条；
+**不要把原图直接喂给列表**，几十张 4K 就能把页面内存吃穿。
+
+### 14. 打包白名单是**手写**的 —— 新增页面必须同步加进去（v1.6.0 首发踩过）
+
+`tools/package.py` 的 `INCLUDE` 是手写清单，`check()` 只校验 **manifest 里声明的** 文件是否齐全。
+`offscreen.html`、`studio/` 这类**不在 manifest 里、靠字符串路径加载**的文件（`chrome.offscreen.createDocument`、
+`chrome.tabs.create({url:'studio/studio.html'})`、`<script src>`）它一点都看不见 ——
+v1.6.0 第一版 zip 就因此**少了 5 个文件**（`offscreen.*` + `studio/*`），`完整性：通过` 照样打印。
+
+现在有两道拦截：
+1. `package.py` 扫包内 `.js`/`.html` 里的相对路径字面量，命中「仓库里真有这个文件、却没进包」就报警；
+2. `platform_check.mjs` F 段断言 `INCLUDE` 必须含 `manifest.json` / `background.js` / `offscreen.*` / `studio` 等 11 个顶层条目。
+
+**新增一个页面或新目录时，先改 `INCLUDE` 再打包**，别只看「完整性：通过」。
+
+### 15. ComfyUI 地址可以跨机，但浏览器不是瓶颈（v1.6.1）
+
+K 的场景是「家里 MacBook 调单位电脑的 GPU」。要分清三层，别把精力花错地方：
+
+1. **浏览器这一层是通的。** 扩展页面与 service worker 都是 secure context，
+   访问 `172.16/12`、`192.168/16`、`10/8` 这些私网地址**实测不被 PNA 拦**（Edge 无头实测，
+   `live_browser_check.mjs` 有两条常驻断言）。所以不要为了「跨域」去折腾 CORS 或声明式网络规则。
+2. **ComfyUI 这一层默认不通。** 它只听 `127.0.0.1`，别的机器连不上（实测局域网 IP 返回 000）。
+   必须在启动参数里加 `--listen 0.0.0.0`（绘世启动器是「允许局域网访问」）并重启。
+   **这不是代码能解决的** —— 报错文案里必须直接把这条说出来，否则用户只会看到 `Failed to fetch`。
+3. **网络这一层最麻烦。** 家里和单位不在同一网段，内网地址根本不可达，要先用组网工具
+   （节点小宝 / Tailscale）打通，然后把**隧道分配的地址**填进来。直连公网 IP + 端口映射基本不可行。
+
+配套的两个设计：
+
+- **地址规范化**（`CC.normalizeComfyUrl`）：允许只填 `172.18.23.232`，自动补 `http://` 与默认端口 8188；
+  **https 不补端口**（通常是 443 反代）；保留路径（`/comfy/`），只去尾部斜杠。
+- **上传前压缩**（`comfy.maxUploadSide`）：跨网时原图十几 MB 传不动，长边压到 1536 通常只剩十分之一。
+  压缩在 **offscreen** 里做（SW 没 canvas），**失败就退回原图**，绝不因为省流量把功能弄挂。
+  结果里回传 `uploaded`，工作台据此显示「上传 1536×1024 · 312 KB（压缩自 8.4 MB）」。
+
+另外 `comfyReverse` 会把**模型回显指令**的输出当成空结果（`looksLikeEcho`）并重试一次：
+这种情况在弱模型 / 小图上很常见，回显的指令粘进 Krea 就是一段说明文，绝不能当结果交给用户。
+
 ---
 
 ## 五、关于夸克浏览器：一条必须先讲清的前提
@@ -256,7 +353,7 @@ AppData/Local/Quark/User Data/Default/Secure Preferences
 ### 1. 静态闸门（最快，不需要任何服务）
 
 ```bash
-node dev-tests/platform_check.mjs        # 预期 86 / 0
+node dev-tests/platform_check.mjs        # 预期 149 / 0
 ```
 
 加载**真实的** `lib/util.js` 与 `background.js`（用最小 `chrome` stub）分五段断言：
@@ -268,11 +365,12 @@ node dev-tests/platform_check.mjs        # 预期 86 / 0
 | C | **菜单形态**：只注册 1 项、无 `parentId`、只在 `image` 上下文、标题固定；`fetchForClip` 处理 `data:` 时不走网络 |
 | D | **仓库卫生**：行尾约定、shebang、接收端残留为零、悬停残骸清零、无内联脚本、消息失败都处理、兜底网存在、图标存在且是合法 PNG |
 | E | 图标：manifest 声明的每个尺寸都能解码、边长对得上 |
+| F | **v1.6.0 新增**：manifest 权限（offscreen / clipboardWrite / min 109）、新文件齐备、offscreen 只认 `target`、后台跳过 offscreen 消息、列目录只 `Depth:1`、反推工作流与 `sampling_mode` 形态、Krea 指令结构、**打包白名单覆盖所有顶层条目**、版本号五处一致 |
 
 ### 2. 真机闸门（最重要的一套）
 
 ```bash
-node dev-tests/live_browser_check.mjs    # 预期 29 / 0
+node dev-tests/live_browser_check.mjs    # 预期 45 / 0
 ```
 
 用 CDP 驱动 **Edge 无头**加载本扩展（独立临时 profile，用完即删）：
@@ -300,12 +398,23 @@ node dev-tests/live_browser_check.mjs    # 预期 29 / 0
 python dev-tests/dav_server.py <davroot> 8081 tester s3cret &
 node dev-tests/webdav_client_test.mjs        # 预期 10 / 0
 node dev-tests/save_integration_test.mjs     # 预期 14 / 0（含文件夹规则三例、落地文件 SHA-256 校验）
+node dev-tests/library_scan_test.mjs         # 预期 12 / 0（工作台列目录：一层、中文名、鉴权取字节）
 ```
 
 > 端口残留会让「文件名递增」类断言假失败：先 `netstat -ano | grep :8081` 找 PID，
 > 再 `taskkill //F //PID <pid>`。
+> `library_scan_test.mjs` 可用 `DAV_PORT=8082` 换端口（服务端的 `davroot` 下要有 `clips/` 子目录）。
 
-### 4. 打包闸门
+### 4. 反推提示词（可选，ComfyUI 不在线时自动跳过）
+
+```bash
+node dev-tests/comfy_reverse_test.mjs        # 预期 5 / 0（未启动 ComfyUI 时 SKIP）
+```
+
+> 它真的会传一张图给本地 ComfyUI 并等结果（单张约 10–30 秒，8G 显存跑 Qwen3-VL 4B）。
+> 与出图共用队列 —— 队列忙的时候会慢，属正常；用 `COMFY_TEST_IMAGE=<大图路径>` 换测试图。
+
+### 5. 打包闸门
 
 ```bash
 python tools/package.py            # 校验 + 产出 ../lan-asset-collector-v<版本>.zip
@@ -354,7 +463,21 @@ python tools/package.py --check    # 只校验不打包
   `create` 无报错；折叠/显示行为是按官方文档 + 注册表推断的，且受夸克自绘菜单支配
 - ⚠️ **从未在真实 macOS 机器上跑过端到端** —— macOS 相关只有路径提示文案与命名规则约束
 - ⚠️ WebDAV 根路径按群晖惯例假设为 `/共享名/子目录`，未在别的 NAS 上验证
-- ⚠️ Chromium 的 Private Network Access 策略是否会拦「扩展 → 私网 IP」，未实测
+- ✅ **「扩展 → 私网 IP」不会被拦**（v1.6.1 实测，Edge 无头）：从 service worker 与扩展页面
+  `fetch` 本机局域网地址（172.18.x）均返回 200。`live_browser_check.mjs` 里有两条常驻断言守着，
+  换内核（夸克）后请先跑一遍
+- ⚠️ **v1.6.0 的剪贴板写入只在 Edge 无头里验证到「offscreen 文档被创建、回执明确」**；
+  「粘贴出来确实是那张原图」需要在真浏览器里手试一次（读回剪贴板要额外权限，没为测试加）
+- ⚠️ **工作台的 FSA 通道（目录授权）未在真机跑过**：列目录用 `handle.values()`、缩略图用 objectURL，
+  代码路径完整但没实测过授权目录下的中文名与大目录
+- ⚠️ **反推提示词只在 Node 里打通了完整链路**（`comfy_reverse_test.mjs`，真实出词）；
+  扩展内（后台 → ComfyUI）与夸克下的表现未实测 —— 后台直连 `127.0.0.1` 的能力已在 Edge 无头里验证
+- ⚠️ **跨机反推（MacBook → 单位电脑）没有端到端跑过**：浏览器侧已实测能访问私网地址，
+  但「单位电脑 ComfyUI 加 `--listen 0.0.0.0` 后家里能否连上」取决于隧道（节点小宝 / Tailscale），
+  属于网络环境，代码侧无法验证。默认夹具是 128px 图标，模型出不了词 —— 质量相关断言会被跳过，
+  换真实照片用 `COMFY_TEST_IMAGE=<路径>` 复跑才作数
+- ⚠️ 单位电脑（3y-guok-PC）的 ComfyUI **当前只监听 `127.0.0.1:8188`**，局域网 IP 直连返回 000。
+  要跨机用，必须先在启动器里打开「允许局域网访问」/ 加 `--listen 0.0.0.0` 并重启
 
 ---
 
@@ -376,6 +499,8 @@ python tools/package.py --check    # 只校验不打包
 | v1.5.7 | 菜单注册改**单步**（去掉 `removeAll` 空档）；`windows.onFocusChanged` 兜底；弹窗加菜单状态诊断行 + 「重新注册」按钮 |
 | v1.5.8 | 修 `Alt`+右键 在「图片上盖透明 div」的站点（Pinterest 等）失效；新增 Pinterest 大图采集（`CC.pinimgOriginal` + `pin:scan`/`pin:collect` + 弹窗「采集本页大图」入口） |
 | v1.5.9 | 单图采集（`Alt`+右键 / `cc-image`）改走「大图推断」`bigSourceOf`：pinimg 自动换算 `originals`、认 `data-orig-img`、否则退回页面那张；`singleSave` 新增 `fallbackUrl` 兜底 |
+| v1.6.0 | **复制原图**（offscreen 写剪贴板，回报真实像素）、**素材工作台**（只扫当前目录、缩略图墙、复制/反推/开原图）、**本地 ComfyUI 反推 Krea 2 提示词**（Qwen3-VL 4B + 原生 TextGenerate）；权限 +`offscreen`/`clipboardWrite`，min Chrome 109 |
+| v1.6.1 | ComfyUI 地址支持**跨机**：地址规范化（裸 IP 自动补 `http://` 与 8188）、**常用位置**下拉一键切换、远程连不上时按本机/远程给两套排查建议、**上传前压缩**（跨网省上行）；反推识别「模型回显指令」并重试；实测确认扩展访问私网 IP 不被 PNA 拦 |
 
 ---
 

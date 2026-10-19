@@ -187,7 +187,75 @@ NAS 密码   只存在本机浏览器里</code></pre>
   </div>
 
   <div class="card">
-    <h2><span class="n">4</span>常见问题</h2>
+    <h2><span class="n">4</span>复制原图 · 素材工作台 · 反推提示词</h2>
+
+    <h3>复制原图 <span class="tag">v1.6.0</span></h3>
+    <p>点扩展图标 →「<strong>复制原图</strong>」，把<strong>本页最大的那张图</strong>以原始文件写进系统剪贴板，
+      可以直接粘进 PS / Figma / 微信。
+      面板会回报<strong>真实像素与体积</strong>（例如「已复制 2400×1600 · 2.4 MB」）——
+      这是分辨「拿到的是原图还是页面缩略图」最快的办法。</p>
+    <div class="note">
+      浏览器自带的右键「复制图片」复制的是<strong>页面上渲染的那一张</strong>：站点普遍把缩略图放在
+      <code>src</code>、把大图藏在 <code>srcset</code> 或 <code>data-orig-img</code> 里（Pinterest 最典型，
+      <code>src</code> 全是 236x），所以浏览器那条路复制出来往往只有几百像素。
+      本扩展走的是与剪藏相同的「大图推断」：能按 CDN 规则逆推原图就取原图，取不到才退回页面版本，
+      并在提示里说明「原图不可达」。
+    </div>
+
+    <h3>素材工作台 <span class="tag">扫描当前目录</span></h3>
+    <p>点扩展图标 →「<strong>素材工作台</strong>」，它只扫描<strong>当前配置的那个目录</strong>
+      （WebDAV 目标地址，或已授权的本地目录），<strong>不递归、不越界</strong>：</p>
+    <ul>
+      <li>进来先列目标目录这一层，点文件夹才往下一层走；顶部面包屑随时回上级</li>
+      <li>缩略图按需加载（长边 460px），大目录不会一次性把几 GB 原图读进内存</li>
+      <li>选中任意一张：可<strong>复制图片</strong>、<strong>反推提示词</strong>、<strong>打开原图</strong></li>
+      <li>右上角显示本地 ComfyUI 是否在线，点它可以重新检测</li>
+    </ul>
+
+    <h3>反推提示词 <span class="tag">本地 ComfyUI</span></h3>
+    <p>在工作台里选中一张图 →「反推提示词」，本机的 <strong>Qwen3-VL 4B</strong>（Krea 2 的文本编码器）
+      会按 Krea 2 Turbo 的写法生成一段可直接使用的英文提示词：</p>
+    <ol>
+      <li>顺序是「主体与姿态 → 外观材质 → 构图与镜头 → 环境 → 光线色彩 → 整体风格」，一到两段自然语言，不堆关键词</li>
+      <li>结果出现在右侧文本框，可改、可一键复制；生成时会显示已等待秒数与 ComfyUI 队列长度</li>
+      <li>指令模板可以在<strong>设置页 → 反推提示词</strong>里整段改写，留空则用内置的 Krea 2 结构</li>
+    </ol>
+    <div class="note">
+      前置条件：本机 ComfyUI 已启动（默认 <code>http://127.0.0.1:8188</code>），并且
+      <code>models/text_encoders/</code> 里有 <code>qwen3vl_4b_fp8_scaled.safetensors</code>。
+      工作流只用 ComfyUI <strong>原生节点</strong>（LoadImage → CLIPLoader → TextGenerate → PreviewAny），
+      不需要安装任何第三方节点包。设置页的「测试 ComfyUI」会告诉你连没连上。
+    </div>
+    <div class="note">反推和出图共用同一个 ComfyUI 队列，正在跑图时会排队 —— 界面会显示「队列：运行 N / 等待 M」，不是卡死。</div>
+
+    <h3>用另一台电脑的 ComfyUI <span class="tag">v1.6.1</span></h3>
+    <p>地址<strong>不是只能填本机</strong>：设置页 → 反推提示词 →「ComfyUI 地址」里可以填任何一台机器的地址。
+      典型场景是<strong>在家里用 MacBook，调单位那台机器的显卡</strong>。要跑通，需要四件事同时成立：</p>
+    <ol>
+      <li><strong>对方 ComfyUI 要允许外部访问。</strong>它默认只监听 <code>127.0.0.1</code>，别的机器一律进不来。
+        启动时加 <code>--listen 0.0.0.0</code>（绘世启动器里是「允许局域网访问」那个开关），重启后生效。</li>
+      <li><strong>地址写对。</strong>可以只填 IP，端口默认 8188：
+        <code>172.18.23.232</code> 与 <code>http://172.18.23.232:8188</code> 等价。
+        同一局域网填内网地址；<strong>跨网</strong>（家里 → 单位）要填<strong>隧道里那台的地址</strong>。</li>
+      <li><strong>防火墙放行 8188</strong>（Windows 第一次启动 ComfyUI 时那个弹窗要点「允许」）。</li>
+      <li><strong>两台机器之间要有网。</strong>不在同一个局域网时，先连上组网工具（节点小宝 / Tailscale 这类），
+        再用它分配的地址。直连公网 IP + 端口映射通常不可行，别在这上面耗时间。</li>
+    </ol>
+    <div class="note">
+      设置页的「<strong>常用位置</strong>」就是为了两地来回切：填好地址点「存为常用」，以后在下拉里选一下即可，
+      选中会<strong>立刻测一次连通性</strong>。地址会自动规范化（补 <code>http://</code>、补默认端口、去掉尾部斜杠）。
+      <br>连不上时，报错会按「本机 / 远程」给两套不同的排查建议 —— 远程那套直接列出上面这四条，不用自己猜。
+    </div>
+    <div class="note">
+      跨网别忘了<strong>上传体积</strong>：一张 4K 原图十几 MB，家里上行传它会等到怀疑人生。
+      设置页有「<strong>上传前压到长边</strong>」，填 <code>1536</code> 就够视觉模型看了，体积通常只剩十分之一；
+      反推完成后状态栏会写清楚「上传 1536×1024 · 312 KB（压缩自 8.4 MB）」，压没压、压到多少一目了然。
+      <strong>填 0 就是不压</strong>（本机用时建议保持 0）。
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">5</span>常见问题</h2>
 
     <h3>连接失败 / 上传超时</h3>
     <p style="margin-top:2px"><strong>WebDAV（方式 A）：</strong></p>
@@ -209,7 +277,7 @@ NAS 密码   只存在本机浏览器里</code></pre>
         想显式触发就点面板底部那行右边的「重新注册」</li>
       <li>刷新后仍不生效，就「移除」扩展、再「加载已解压的扩展程序」重新选一次目录；
         同时确认选中的就是本目录，而不是早先解压在别处的旧副本</li>
-      <li>自检：把鼠标悬停在工具栏图标上，悬浮提示里带版本号（形如「素材采集器 1.5.9 · …」）——
+      <li>自检：把鼠标悬停在工具栏图标上，悬浮提示里带版本号（形如「素材采集器 1.6.1 · …」）——
         版本号对得上，说明浏览器跑的就是这份代码</li>
     </ul>
 
@@ -272,7 +340,8 @@ NAS 密码   只存在本机浏览器里</code></pre>
     <p>所有数据只写到你自己配置的目录，不经过任何第三方服务器。扩展需要「读取所有网站数据」的权限用于抓取页面图片和截屏，这是这类工具的必要权限。</p>
     <p>WebDAV 模式下，NAS 账号密码只存在本机扩展的存储里，仅在向该 NAS 发请求时用于 Basic 鉴权。写入路径由模板生成且经过清洗，<code>..</code> 与路径分隔符会被剥离。建议单独建一个只对该共享文件夹有权限的 NAS 账号。</p>
     <p>扩展不开任何本地监听端口，也不接受来自网页的连接，因此没有可被外部写入的入口。写入路径由模板生成且经过清洗，<code>..</code> 与路径分隔符会被剥离。</p>
-    <p style="color:#6b7885;font-size:12.5px">版本 1.5.9 · 两条落盘通道：WebDAV 直传 / 目录授权 · Windows 与 macOS 同一份代码</p>
+    <p>反推提示词只会把图片发给你自己填的 ComfyUI 地址（默认 <code>127.0.0.1</code>），不经过任何云端服务；生成的提示词只保存在当前页面里，关掉就没了。</p>
+    <p style="color:#6b7885;font-size:12.5px">版本 1.6.1 · 两条落盘通道：WebDAV 直传 / 目录授权 · 反推提示词走本地 ComfyUI · Windows 与 macOS 同一份代码</p>
   </div>
 
 </div>

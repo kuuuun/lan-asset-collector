@@ -208,6 +208,26 @@ select:focus {
 
 input[type="range"] { width: 100%; accent-color: var(--blue); }
 
+textarea {
+  width: 100%;
+  border: 1px solid #d8dee7;
+  border-radius: 9px;
+  padding: 9px 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink);
+  background: #fff;
+  outline: none;
+  resize: vertical;
+  transition: border-color 0.14s, box-shadow 0.14s;
+}
+
+textarea:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
 select { appearance: none; background-image: none; cursor: pointer; }
 
 .grid2 {

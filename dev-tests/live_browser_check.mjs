@@ -129,6 +129,17 @@ async function listTargets() {
   return await r.json();
 }
 
+/** 取一个本机的非回环 IPv4（用来模拟「从另一台机器访问」的地址形态） */
+function pickLanIp() {
+  const ifs = os.networkInterfaces();
+  for (const name of Object.keys(ifs)) {
+    for (const ni of ifs[name] || []) {
+      if (ni.family === 'IPv4' && !ni.internal) return ni.address;
+    }
+  }
+  return '';
+}
+
 /** 把一堆 CDP 事件里的 CSP 违规与未捕获异常摘出来 */
 function harvest(evts, where, cspHits, exceptions) {
   for (const e of evts) {
@@ -298,6 +309,7 @@ try {
     { label: 'help.html', rel: 'help/help.html?first=1' },
     { label: 'popup.html', rel: 'popup/popup.html' },
     { label: 'options.html', rel: 'options/options.html' },
+    { label: 'studio.html', rel: 'studio/studio.html' },
   ];
 
   if (extId) {
@@ -335,6 +347,76 @@ try {
         const hi = JSON.parse((h.result && h.result.value) || '{}');
         check('帮助页只用外部脚本（无内联 <script>）', hi.ext === true && hi.inline === 0, JSON.stringify(hi));
         check('首次提示条在 ?first=1 时真的显示出来', hi.shown === true, JSON.stringify(hi));
+      }
+
+      if (P.label === 'options.html') {
+        // v1.6.1：ComfyUI 地址不再只能是本机 —— 家里 MacBook 调单位电脑就靠这一项
+        const o = await c.send('Runtime.evaluate', {
+          expression: `JSON.stringify((() => {
+            const sel = document.getElementById('comfyProfiles');
+            return {
+              sel: !!sel,
+              opts: sel && sel.options ? sel.options.length : 0,
+              side: !!document.getElementById('comfyMaxSide'),
+              save: !!document.getElementById('comfySaveProfile'),
+              del: !!document.getElementById('comfyDelProfile')
+            };
+          })())`,
+          returnByValue: true,
+        });
+        const oi = JSON.parse((o.result && o.result.value) || '{}');
+        check(
+          '设置页有「常用位置」与「上传前压缩」两个新控件',
+          oi.sel && oi.opts >= 1 && oi.side && oi.save && oi.del,
+          JSON.stringify(oi)
+        );
+
+        // 真页面里跑一遍规范化：裸地址要变成完整 URL
+        const norm = await c.send('Runtime.evaluate', {
+          expression: `(async () => {
+            const el = document.getElementById('comfyUrl');
+            el.value = '127.0.0.1:45999';
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            await new Promise((r) => setTimeout(r, 350));
+            return el.value;
+          })()`,
+          awaitPromise: true,
+          returnByValue: true,
+        });
+        const nv = String((norm.result && norm.result.value) || '');
+        check('设置页把裸地址补成完整 URL', nv === 'http://127.0.0.1:45999', nv);
+
+        // 连一个关着的端口：必须**快速**失败并给出原因，不能让人对着转圈等超时
+        const t0 = Date.now();
+        const bad = await c.send('Runtime.evaluate', {
+          expression: `(async () => {
+            document.getElementById('comfyTest').click();
+            for (let i = 0; i < 60; i++) {
+              await new Promise((r) => setTimeout(r, 100));
+              const s = document.getElementById('comfyState').textContent || '';
+              if (s.indexOf('✗') === 0) return s;
+              if (s.indexOf('✓') === 0) return 'UNEXPECTED ' + s;
+            }
+            return 'TIMEOUT ' + (document.getElementById('comfyState').textContent || '');
+          })()`,
+          awaitPromise: true,
+          returnByValue: true,
+        });
+        const bt = String((bad.result && bad.result.value) || '');
+        check('连不上时给出明确原因而不是干转', bt.indexOf('✗') === 0 && Date.now() - t0 < 14000, bt.slice(0, 120));
+
+        // 还原地址，别影响后面的分支探测
+        await c.send('Runtime.evaluate', {
+          expression: `(async () => {
+            const el = document.getElementById('comfyUrl');
+            el.value = '127.0.0.1:8188';
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            await new Promise((r) => setTimeout(r, 250));
+            return 1;
+          })()`,
+          awaitPromise: true,
+          returnByValue: true,
+        });
       }
 
       if (P.label === 'popup.html') {
@@ -395,6 +477,16 @@ try {
           JSON.stringify(pgi)
         );
 
+        // v1.6.0：复制原图 / 素材工作台两个新入口必须在面板上
+        const nx = await c.send('Runtime.evaluate', {
+          expression:
+            "JSON.stringify({ copy: !!document.getElementById('copyImg'), studio: !!document.getElementById('openStudio') })",
+          returnByValue: true,
+        });
+        let nxi = {};
+        try { nxi = JSON.parse((nx.result && nx.result.value) || '{}'); } catch (_) {}
+        check('弹窗有「复制原图」与「素材工作台」入口', nxi.copy === true && nxi.studio === true, JSON.stringify(nxi));
+
         // 走真实的消息通道把后台的每个分支都打一遍（上面的直接调用绕过了 onMessage，
         // 测不到「消息包装/回复」这一层）。这里从弹窗页面发，sender.tab 是它自己。
         const msgs = [
@@ -406,6 +498,9 @@ try {
           ['single:save', { type: 'single:save', url: 'data:image/png;base64,iVBORw0KGgo=' }],
           ['batch:save', { type: 'batch:save', items: [{ url: 'data:image/png;base64,iVBORw0KGgo=' }] }],
           ['pin:collect', { type: 'pin:collect' }],
+          ['copy:image', { type: 'copy:image', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' }],
+          ['copy:page', { type: 'copy:page' }],
+          ['comfy:queue', { type: 'comfy:queue' }],
           ['unknown', { type: 'no-such-message' }],
         ];
         const chan = await c.send('Runtime.evaluate', {
@@ -441,6 +536,33 @@ try {
           broken.map((x) => `${x[0]}: ${x[1]}`).join(' | ')
         );
         await sleep(400);
+
+        // 复制原图依赖 offscreen 文档：真实内核里能不能创建出来，是这条路唯一的硬前提。
+        // 剪贴板内容本身没法在无头环境里读回来，但「文档被创建 / 有明确回执」必须成立。
+        const off = await c.send('Runtime.evaluate', {
+          expression: [
+            '(async () => {',
+            '  const before = (await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] })).length;',
+            '  const reply = await new Promise((res) => {',
+            '    chrome.runtime.sendMessage({ type: "copy:image", dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" }, (r) => {',
+            '      const e = chrome.runtime.lastError; res(e ? { error: e.message } : (r || {}));',
+            '    });',
+            '  });',
+            '  const after = (await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] })).length;',
+            '  return JSON.stringify({ before, after, reply });',
+            '})()',
+          ].join('\n'),
+          awaitPromise: true,
+          returnByValue: true,
+        });
+        let offRes = {};
+        try { offRes = JSON.parse((off.result && off.result.value) || '{}'); } catch (_) {}
+        check('按需创建了 offscreen 文档（剪贴板/缩略图的前提）', offRes.after >= 1, JSON.stringify(offRes));
+        check(
+          '复制图片有明确回执（成功给尺寸，失败给原因）',
+          !!(offRes.reply && (offRes.reply.ok || offRes.reply.error)),
+          JSON.stringify(offRes.reply)
+        );
 
         // 把弹窗里的入口逐个点一遍 —— 真实用户报的错就是点这里点出来的。
         // 顺序有讲究：「帮助 / 设置」会 window.close()，必须留在最后点。
@@ -491,6 +613,22 @@ try {
           await sleep(400);
         }
         await sleep(400);
+      }
+
+      // v1.6.0：素材工作台。重点不是「有没有图」，而是页面自己跑通了：
+      // 脚本没有因为拿不到目录/ComfyUI 就整页挂掉，工具栏与面板都在。
+      if (P.label === 'studio.html') {
+        const st = await c.send('Runtime.evaluate', {
+          expression:
+            "JSON.stringify({ grid: !!document.getElementById('grid'), panel: !!document.getElementById('panel'), copyBtn: !!document.getElementById('copyBtn'), revBtn: !!document.getElementById('revBtn'), comfy: (document.getElementById('comfyText') || {}).textContent || '', target: (document.getElementById('targetText') || {}).textContent || '', ver: (document.getElementById('ver') || {}).textContent || '' })",
+          returnByValue: true,
+        });
+        let si = {};
+        try { si = JSON.parse((st.result && st.result.value) || '{}'); } catch (_) {}
+        check('工作台的网格 / 侧栏 / 复制 / 反推按钮都在', si.grid && si.panel && si.copyBtn && si.revBtn, JSON.stringify(si));
+        check('工作台完成了初始化（目标位置与 ComfyUI 状态都有文案）', !!si.target && !!si.comfy, JSON.stringify(si));
+        const manifestVer2 = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8')).version;
+        check(`工作台显示的版本号是最新的（${si.ver}）`, si.ver === 'v' + manifestVer2, si.ver);
       }
 
       harvest(c.events, P.label, cspHits, exceptions);
@@ -546,6 +684,93 @@ try {
           });
           const pr = String((ping.result && ping.result.value) || '');
           check('内容脚本已注入测试页（cc:ping 有回复）', /"ok"\s*:\s*true/.test(pr), pr.slice(0, 120));
+
+          // v1.6.0：「复制原图」靠 cc:image:largest 找本页最大的那张图。
+          // 这里确认它真的在真实页面上找得到，并回报了源图的真实像素。
+          const lg = await swCdp.send('Runtime.evaluate', {
+            expression: [
+              '(async () => {',
+              '  const tabs = await chrome.tabs.query({});',
+              `  const t = tabs.find((x) => (x.url || "").indexOf(":${hp}/") >= 0);`,
+              '  if (!t) return "NO_TAB";',
+              '  return await new Promise((res) => {',
+              '    try {',
+              '      chrome.tabs.sendMessage(t.id, { type: "cc:image:largest" }, (r) => {',
+              '        res(chrome.runtime.lastError ? "ERR: " + chrome.runtime.lastError.message : JSON.stringify(r));',
+              '      });',
+              '    } catch (e) { res("THROW: " + String(e && e.message)); }',
+              '  });',
+              '})()',
+            ].join('\n'),
+            awaitPromise: true,
+            returnByValue: true,
+          });
+          const lgr = String((lg.result && lg.result.value) || '');
+          check(
+            '「本页最大图」找得到且回报真实像素（复制原图的前提）',
+            /"w"\s*:\s*128/.test(lgr) && /pic\.png/.test(lgr),
+            lgr.slice(0, 160)
+          );
+
+          // 反推提示词是后台直接打 127.0.0.1:8188。这条先确认「后台能访问本机端口」
+          // —— Private Network Access 之类的策略只要拦了，ComfyUI 那条路就整条不通，
+          // 而且报错会是含糊的 Failed to fetch。
+          const swFetch = await swCdp.send('Runtime.evaluate', {
+            expression: `(async () => { try { const r = await fetch("http://127.0.0.1:${hp}/"); return "status " + r.status; } catch (e) { return "ERR " + String((e && e.message) || e); } })()`,
+            awaitPromise: true,
+            returnByValue: true,
+          });
+          const swf = String((swFetch.result && swFetch.result.value) || '');
+          check('后台能直接访问本机端口（ComfyUI 走同一条路）', /status 200/.test(swf), swf);
+
+          // ---------- 跨机场景：家里 MacBook 用「单位电脑的局域网 IP」调同一个 ComfyUI ----------
+          // 扩展页面是 secure context，而 127.0.0.1 属于 local、不算私网；
+          // 一旦填的是 192.168/172.16/10 这类地址，就会落到 Chromium 的
+          // Private Network Access 判定上 —— ComfyUI 不会回 Access-Control-Allow-Private-Network，
+          // 被拦的话报错只是一句含糊的 Failed to fetch。所以必须真机实测，不能想当然。
+          const lanIp = pickLanIp();
+          if (!lanIp) {
+            note('本机没有非回环 IPv4，跳过「私网地址」访问验证');
+          } else {
+            const psrv = http.createServer((req, res) => {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ system: { comfyui_version: 'lan-probe' } }));
+            });
+            await new Promise((r) => psrv.listen(0, '0.0.0.0', r));
+            const lp = psrv.address().port;
+            const lan = `http://${lanIp}:${lp}`;
+            try {
+              const r1 = await swCdp.send('Runtime.evaluate', {
+                expression: `(async () => { try { const r = await fetch("${lan}/system_stats", {cache:"no-store"}); const j = await r.json(); return "status " + r.status + " " + j.system.comfyui_version; } catch (e) { return "ERR " + String((e && e.message) || e); } })()`,
+                awaitPromise: true,
+                returnByValue: true,
+              });
+              const v1 = String((r1.result && r1.result.value) || '');
+              check('后台能访问局域网地址（跨机复用同一个 ComfyUI）', /status 200/.test(v1), v1);
+
+              // 页面侧也试一次：设置页的「测试」按钮最终也走后台，
+              // 但工作台的预览/缩略图在 fsa 模式下会从页面直接取，口径要一致。
+              const pg = await browserCdp.send('Target.createTarget', {
+                url: `chrome-extension://${extId}/studio/studio.html`,
+              });
+              await sleep(1200);
+              const pgt = (await listTargets()).find((x) => x.id === pg.targetId);
+              if (pgt) {
+                const pc = await connect(pgt.webSocketDebuggerUrl);
+                await pc.send('Runtime.enable');
+                const r2 = await pc.send('Runtime.evaluate', {
+                  expression: `(async () => { try { const r = await fetch("${lan}/system_stats", {cache:"no-store"}); return "status " + r.status; } catch (e) { return "ERR " + String((e && e.message) || e); } })()`,
+                  awaitPromise: true,
+                  returnByValue: true,
+                });
+                const v2 = String((r2.result && r2.result.value) || '');
+                check('扩展页面也能访问局域网地址（工作台同口径）', /status 200/.test(v2), v2);
+                pc.close();
+              }
+            } finally {
+              psrv.close();
+            }
+          }
 
           const c = await connect(t.webSocketDebuggerUrl);
           c.events.length = 0;
