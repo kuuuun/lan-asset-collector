@@ -620,12 +620,16 @@ try {
       if (P.label === 'studio.html') {
         const st = await c.send('Runtime.evaluate', {
           expression:
-            "JSON.stringify({ grid: !!document.getElementById('grid'), panel: !!document.getElementById('panel'), copyBtn: !!document.getElementById('copyBtn'), revBtn: !!document.getElementById('revBtn'), comfy: (document.getElementById('comfyText') || {}).textContent || '', target: (document.getElementById('targetText') || {}).textContent || '', ver: (document.getElementById('ver') || {}).textContent || '' })",
+            "JSON.stringify({ grid: !!document.getElementById('grid'), panel: !!document.getElementById('panel'), copyBtn: !!document.getElementById('copyBtn'), revBtn: !!document.getElementById('revBtn'), panelShown: !!document.getElementById('panel') && !document.getElementById('panel').hidden, bodyHidden: !!document.getElementById('panelBody') && document.getElementById('panelBody').hidden, hint: (document.getElementById('panelHint') || {}).innerText || '', comfy: (document.getElementById('comfyText') || {}).textContent || '', target: (document.getElementById('targetText') || {}).textContent || '', ver: (document.getElementById('ver') || {}).textContent || '' })",
           returnByValue: true,
         });
         let si = {};
         try { si = JSON.parse((st.result && st.result.value) || '{}'); } catch (_) {}
         check('工作台的网格 / 侧栏 / 复制 / 反推按钮都在', si.grid && si.panel && si.copyBtn && si.revBtn, JSON.stringify(si));
+        // v1.6.4：侧栏未选中时也要能看见「反推提示词」——之前 panel 默认 hidden，
+        // 不点任何图就永远发现不了这个功能（用户连问两次「入口在哪」）。
+        check('未选中图片时侧栏就写着能反推（不用先点图才知道）',
+          si.panelShown && si.bodyHidden && /反推提示词/.test(si.hint), JSON.stringify({ shown: si.panelShown, bodyHidden: si.bodyHidden, hint: (si.hint || '').slice(0, 60) }));
         check('工作台完成了初始化（目标位置与 ComfyUI 状态都有文案）', !!si.target && !!si.comfy, JSON.stringify(si));
         const manifestVer2 = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8')).version;
         check(`工作台显示的版本号是最新的（${si.ver}）`, si.ver === 'v' + manifestVer2, si.ver);

@@ -30,6 +30,7 @@ const state = {
   revTimer: null,
   queuePoll: null,
   revStart: 0,
+  comfyOk: null,
   seq: 0
 };
 
@@ -129,6 +130,7 @@ async function pingComfy() {
   pill.className = 'pill';
   text.textContent = 'ComfyUI 检测中…';
   const r = await send({ type: 'comfy:ping' });
+  state.comfyOk = !!(r && r.ok);
   if (r && r.ok) {
     pill.className = 'pill ok';
     text.textContent = 'ComfyUI ' + (r.version || '已连接') + (r.device ? ' · ' + r.device.replace(/NVIDIA GeForce /, '') : '');
@@ -136,6 +138,19 @@ async function pingComfy() {
     pill.className = 'pill bad';
     text.textContent = 'ComfyUI 离线：' + String((r && r.error) || '未响应').slice(0, 40);
   }
+  paintHint();
+}
+
+/** 引导态底部那行：当前目录有几张图 + 反推是否就绪（不选中图也能看到） */
+function paintHint() {
+  const foot = $('#hintFoot');
+  if (!foot) return;
+  const n = state.entries.filter((e) => !e.isDir).length;
+  const bits = [];
+  if (n) bits.push('当前目录 ' + n + ' 张图');
+  if (state.comfyOk === true) bits.push('ComfyUI 已连接，可以直接反推');
+  else if (state.comfyOk === false) bits.push('ComfyUI 离线，反推前先启动它');
+  foot.textContent = bits.join(' · ');
 }
 
 /* ---------------- 列目录 ---------------- */
@@ -224,6 +239,7 @@ async function load() {
     $('#empty').hidden = false;
     $('#emptyTitle').textContent = '读不到这个目录';
     $('#emptyDesc').textContent = res.error || '未知错误';
+    paintHint();
     return;
   }
 
@@ -232,6 +248,7 @@ async function load() {
   const dirs = state.entries.filter((e) => e.isDir);
   const shown = state.entries.slice(0, MAX_ITEMS);
   $('#count').textContent = dirs.length + ' 个文件夹 · ' + imgs.length + ' 张图片';
+  paintHint();
 
   if (!state.entries.length) {
     $('#empty').hidden = false;
@@ -365,7 +382,12 @@ async function makeThumb(it) {
 /* ---------------- 面板 ---------------- */
 
 function closePanel() {
-  $('#panel').hidden = true;
+  /* 不是把面板藏起来，而是退回「引导态」——
+     面板一消失，用户就再也不知道这里有反推这件事了（v1.6.4 之前正是这样）。 */
+  $('#panelBody').hidden = true;
+  $('#panelHint').hidden = false;
+  $('#closePanel').hidden = true;
+  $('#selName').textContent = '未选择图片';
   state.sel = null;
   document.querySelectorAll('.card.sel').forEach((c) => c.classList.remove('sel'));
   stopRevTimer();
@@ -381,7 +403,9 @@ async function select(it, el) {
   if (el) el.classList.add('sel');
   state.sel = it;
 
-  $('#panel').hidden = false;
+  $('#panelBody').hidden = false;
+  $('#panelHint').hidden = true;
+  $('#closePanel').hidden = false;
   $('#selName').textContent = it.name;
   $('#selName').title = it.name;
   $('#revBox').hidden = true;

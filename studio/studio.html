@@ -10,7 +10,7 @@
   <div class="brand">
     <img src="../assets/icons/48.png" alt="">
     <div>
-      <h1>素材工作台 <span class="ver" id="ver">v1.6.3</span></h1>
+      <h1>素材工作台 <span class="ver" id="ver">v1.6.4</span></h1>
       <p id="targetText">正在读取保存位置…</p>
     </div>
   </div>
@@ -37,14 +37,24 @@
     <strong id="emptyTitle">这个目录里还没有图片</strong>
     <span id="emptyDesc">用扩展采几张之后回来刷新即可；也可以点上面的文件夹进下一层。</span>
   </section>
-</main>
 
-<aside class="panel" id="panel" hidden>
+  <aside class="panel" id="panel">
   <div class="panel-head">
-    <strong id="selName">未选择</strong>
-    <button class="icon" id="closePanel" title="关闭">×</button>
+    <strong id="selName">未选择图片</strong>
+    <button class="icon" id="closePanel" title="取消选择" hidden>×</button>
   </div>
 
+  <div class="panel-hint" id="panelHint">
+    <p>点左边任意一张图，这里会出现：</p>
+    <ul>
+      <li><strong>复制图片</strong>：按原图字节复制，不是缩略图</li>
+      <li><strong>反推提示词</strong>：交给本地 ComfyUI（Krea 2 结构）</li>
+      <li><strong>打开原图</strong>：在新标签页看原尺寸</li>
+    </ul>
+    <p class="hint-foot" id="hintFoot"></p>
+  </div>
+
+  <div id="panelBody" hidden>
   <div class="preview"><img id="selImg" alt=""></div>
   <div class="meta" id="selMeta"></div>
 
@@ -66,7 +76,9 @@
     </div>
     <p class="tip">提示词按 Krea 2 Turbo 的结构生成（主体 → 细节 → 构图 → 环境 → 光线 → 风格）。可在设置页改指令模板。</p>
   </section>
+  </div>
 </aside>
+</main>
 
 <script src="../lib/util.js"></script>
 <script src="../lib/store.js"></script>

@@ -789,7 +789,7 @@ const bgSrc = read('background.js');
 const comfySrc = read('lib/comfy.js');
 const offSrc = read('offscreen.js');
 
-check('manifest 版本与后台常量一致', manifest.version === '1.6.3', manifest.version);
+check('manifest 版本与后台常量一致', manifest.version === '1.6.4', manifest.version);
 
 // 剪贴板：MV3 里唯一稳定的路径是 offscreen + clipboardWrite，两者缺一不可
 check('manifest 申请了 offscreen 权限', (manifest.permissions || []).includes('offscreen'), JSON.stringify(manifest.permissions));
