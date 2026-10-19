@@ -286,10 +286,36 @@ document.addEventListener('keydown', (e) => {
   window.close();
 });
 
+/**
+ * 上次失败原因。
+ *
+ * 页内提示只活五秒，事后谁也复述不出报了什么，而排查最需要的就是那句原文。
+ * 后台与内容脚本都往 `collector.lastError` 写一份，这里把它显示出来；
+ * 超过一天的不显示 —— 陈年旧账比没有更误导。
+ */
+async function showLastError() {
+  const el = $('#lastErr');
+  if (!el) return;
+  let rec = null;
+  try {
+    const got = await chrome.storage.local.get('collector.lastError');
+    rec = got && got['collector.lastError'];
+  } catch (_) {
+    return;
+  }
+  if (!rec || !rec.message) return;
+  if (!rec.at || Date.now() - rec.at > 24 * 3600 * 1000) return;
+  const when = new Date(rec.at).toTimeString().slice(0, 8);
+  el.textContent = '上次失败 ' + when + ' · ' + rec.message;
+  el.title = [rec.where, rec.url].filter(Boolean).join(' · ');
+  el.hidden = false;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadStatus();
   // 打开面板即自检一次菜单，顺带把丢失的右键项补回来
   refreshMenuState(false);
   // Pinterest 上右键这条路走不通，改用面板按钮
   setupPinEntry();
+  showLastError();
 });

@@ -789,7 +789,7 @@ const bgSrc = read('background.js');
 const comfySrc = read('lib/comfy.js');
 const offSrc = read('offscreen.js');
 
-check('manifest 版本与后台常量一致', manifest.version === '1.6.2', manifest.version);
+check('manifest 版本与后台常量一致', manifest.version === '1.6.3', manifest.version);
 
 // 剪贴板：MV3 里唯一稳定的路径是 offscreen + clipboardWrite，两者缺一不可
 check('manifest 申请了 offscreen 权限', (manifest.permissions || []).includes('offscreen'), JSON.stringify(manifest.permissions));
@@ -880,7 +880,27 @@ for (const page of ['studio/studio.html', 'offscreen.html']) {
   check(`${page} 无 onclick=`, !/\son\w+\s*=/i.test(html));
 }
 
-// 打包白名单必须覆盖所有会被扩展加载的顶层条目// （v1.6.0 首发时白名单漏了 offscreen.* 与 studio/ → zip 里少了 5 个文件，
+/* ---- v1.6.3：失败留痕（Alt+右键 静默 → 分级提示 → 能回看原文） ---- */
+check(
+  '内容脚本把失败原因写进 collector.lastError',
+  /'collector\.lastError'/.test(contentSrc) && /function recordErr/.test(contentSrc)
+);
+check('Alt+右键的失败分支逐个留痕（不止一条）', (contentSrc.match(/recordErr\('alt:/g) || []).length >= 3);
+check(
+  '后台在 single:save 失败时也留痕（右键菜单与 Alt+右键 共用）',
+  /function recordLastError/.test(bgSrc) && /recordLastError\('single:save'/.test(bgSrc)
+);
+check(
+  '弹窗能显示上次失败原因（不必让用户复述五秒前的提示）',
+  /id="lastErr"/.test(read('popup/popup.html')) && /showLastError/.test(read('popup/popup.js'))
+);
+check(
+  '重载扩展后提示刷新页面（旧标签页脚本作废的典型症状）',
+  /context invalidated/.test(contentSrc) && /刷新本页/.test(contentSrc)
+);
+
+// 打包白名单必须覆盖所有会被扩展加载的顶层条目
+// （v1.6.0 首发时白名单漏了 offscreen.* 与 studio/ → zip 里少了 5 个文件，
 //   而 manifest 只声明 background/popup/options，查不出来。这里先红。）
 const pkgSrc = read('tools/package.py');
 for (const entry of ['manifest.json', 'background.js', 'offscreen.html', 'offscreen.js',

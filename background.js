@@ -6,7 +6,7 @@ importScripts('lib/util.js', 'lib/store.js', 'lib/webdav.js', 'lib/saver.js', 'l
 
 const CC = self.CC;
 
-const VERSION = '1.6.2';
+const VERSION = '1.6.3';
 const CAPTURE_GAP = 320; // 两次 captureVisibleTab 之间的最小间隔（配额：2 次/秒）
 
 /* ================= 平台信息 =================
@@ -600,6 +600,23 @@ async function fetchForClip(tab, url) {
   return fallback.ok ? fallback : { ok: false, error: direct.error || fallback.error };
 }
 
+/**
+ * 失败留痕：写进 `collector.lastError`，弹窗会显示，排查时也能直接读存储。
+ * 页内提示几秒就没了，事后复述「它说采集失败」等于没有信息。
+ */
+function recordLastError(where, message, url) {
+  try {
+    chrome.storage.local.set({
+      'collector.lastError': {
+        at: Date.now(),
+        where: String(where || ''),
+        message: String(message || ''),
+        url: String(url || '')
+      }
+    });
+  } catch (_) {}
+}
+
 async function singleSave(tab, payload) {
   const settings = await CC.getSettings();
   const target = await CC.checkTarget(settings);
@@ -972,7 +989,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
 
     case 'single:save':
-      done(singleSave(sender.tab, msg));
+      done(
+        singleSave(sender.tab, msg).then((r) => {
+          // 失败留痕：Alt+右键 与右键菜单共用这一条，记一次就够
+          if (!r || !r.ok) recordLastError('single:save', (r && (r.error || r.message)) || '未知错误', msg && msg.url);
+          return r;
+        })
+      );
       return true;
 
     case 'pin:collect':

@@ -30,6 +30,28 @@
     } catch (_) {}
   }
 
+  /* ================= 失败留痕 ================= */
+
+  /**
+   * 把失败原因写进扩展存储（`collector.lastError`）。
+   *
+   * 为什么值得单独存一份：页内提示 5 秒就消失，事后谁也说不清当时报了什么，
+   * 而排查最需要的就是那句原文。存在这里之后，弹窗能直接显示，
+   * 维护者也能从存储里读到 —— 不用让用户复述。
+   */
+  function recordErr(where, message, extra) {
+    try {
+      chrome.storage.local.set({
+        'collector.lastError': Object.assign(
+          { at: Date.now(), where: String(where || ''), message: String(message || '') },
+          extra || {}
+        )
+      });
+    } catch (_) {}
+  }
+
+  /* ================= 设置 ================= */
+
   try {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === 'local' && changes[SKEY]) {
@@ -814,12 +836,14 @@
       }
       const img = imageUnderPoint(e.target, e.clientX, e.clientY);
       if (!img) {
+        recordErr('alt:no-image', '这一下没认出图片', { page: location.href });
         toast('这一下没认出图片（可能被透明覆盖层挡住）—— 可改用右键菜单，或在弹窗里点「采集本页大图」', 'err', 5000);
         return;
       }
       // 取「大图」而不是页面上那张缩略图；把缩略图作为抓取失败时的退路
       const pick = bigSourceOf(img);
       if (!pick || !pick.url) {
+        recordErr('alt:no-url', '读不到这张图的地址', { page: location.href });
         toast('读不到这张图的地址（可能是 canvas 或受保护资源）', 'err', 4000);
         return;
       }
@@ -842,6 +866,7 @@
           return;
         }
         const why = String((res && (res.error || res.message)) || '未知错误');
+        recordErr('alt:save', why, { url: pick.url, page: location.href, w: img.naturalWidth, h: img.naturalHeight });
         // 重载扩展后，已打开的标签页仍挂着**旧的那份脚本**，它的 chrome.runtime 已经作废。
         // 这是「刚才还能用、改完就不动了」最常见的原因，必须说清是刷新页面而不是功能坏了。
         if (/context invalidated|receiving end does not exist|message port closed/i.test(why)) {
@@ -885,7 +910,7 @@
   async function handle(msg) {
     switch (msg.type) {
       case 'cc:ping':
-        return { ok: true, version: '1.6.2' };
+        return { ok: true, version: '1.6.3' };
 
       case 'cc:toast':
         toast(msg.text || '', msg.kind || '', msg.ms);
