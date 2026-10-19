@@ -803,12 +803,26 @@
   document.addEventListener(
     'contextmenu',
     (e) => {
-      if (!settings.altRightClick || !e.altKey) return;
+      // 不按 Alt 一律不碰 —— 页面自己的右键菜单必须照常弹。
+      // 按下 Alt 之后的失败分支不再静默：以前四种不同的原因（开关关了 /
+      // 没认出图 / 读不到地址 / 扩展刚重载）看起来全是「没反应」，
+      // 用户没法判断是自己按错还是真坏了。能说话的地方就说话。
+      if (!e.altKey) return;
+      if (!settings.altRightClick) {
+        toast('Alt + 右键采集已在设置里关闭（设置 → 采集行为）', 'err', 4000);
+        return;
+      }
       const img = imageUnderPoint(e.target, e.clientX, e.clientY);
-      if (!img) return;
+      if (!img) {
+        toast('这一下没认出图片（可能被透明覆盖层挡住）—— 可改用右键菜单，或在弹窗里点「采集本页大图」', 'err', 5000);
+        return;
+      }
       // 取「大图」而不是页面上那张缩略图；把缩略图作为抓取失败时的退路
       const pick = bigSourceOf(img);
-      if (!pick || !pick.url) return;
+      if (!pick || !pick.url) {
+        toast('读不到这张图的地址（可能是 canvas 或受保护资源）', 'err', 4000);
+        return;
+      }
       const alt = pick.alt && pick.alt !== pick.url ? pick.alt : '';
       e.preventDefault();
       e.stopPropagation();
@@ -823,8 +837,18 @@
         sourceUrl: location.href
       }).then((res) => {
         closeToast(t);
-        if (res && res.ok) toast(res.duplicated ? '这张图已采集过，已跳过' : '已保存到素材库', res.duplicated ? '' : 'ok', 3000);
-        else toast('采集失败：' + ((res && (res.error || res.message)) || '未知错误'), 'err');
+        if (res && res.ok) {
+          toast(res.duplicated ? '这张图已采集过，已跳过' : '已保存到素材库', res.duplicated ? '' : 'ok', 3000);
+          return;
+        }
+        const why = String((res && (res.error || res.message)) || '未知错误');
+        // 重载扩展后，已打开的标签页仍挂着**旧的那份脚本**，它的 chrome.runtime 已经作废。
+        // 这是「刚才还能用、改完就不动了」最常见的原因，必须说清是刷新页面而不是功能坏了。
+        if (/context invalidated|receiving end does not exist|message port closed/i.test(why)) {
+          toast('扩展刚重载过，这个标签页还挂着旧脚本 —— 按 F5 刷新本页再试', 'err', 6000);
+          return;
+        }
+        toast('采集失败：' + why, 'err');
       });
     },
     true
@@ -861,7 +885,7 @@
   async function handle(msg) {
     switch (msg.type) {
       case 'cc:ping':
-        return { ok: true, version: '1.6.1' };
+        return { ok: true, version: '1.6.2' };
 
       case 'cc:toast':
         toast(msg.text || '', msg.kind || '', msg.ms);

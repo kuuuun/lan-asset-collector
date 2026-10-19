@@ -712,6 +712,42 @@ try {
             lgr.slice(0, 160)
           );
 
+          // ---------- Alt + 右键（夸克下唯一不依赖原生菜单的单图路径） ----------
+          // 派发真实的 contextmenu：DOM 事件跨 world，内容脚本在隔离世界里也收得到。
+          // 判据用 dispatchEvent 的返回值 —— 返回 false 才是被 preventDefault，
+          // 也就是「认出了这张图并进入采集」。三个方向都要测：抢到 / 不误抢 / 不误拦。
+          const probeTarget = (await listTargets()).find((x) => x.id === probeId);
+          if (probeTarget && probeTarget.webSocketDebuggerUrl) {
+            const pc = await connect(probeTarget.webSocketDebuggerUrl);
+            await pc.send('Runtime.enable');
+            const ev = await pc.send('Runtime.evaluate', {
+              expression: [
+                '(() => {',
+                '  const img = document.querySelector("#pic");',
+                '  if (!img) return "NO_IMG";',
+                '  const r = img.getBoundingClientRect();',
+                '  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;',
+                '  const fire = (t, alt, x, y) => t.dispatchEvent(new MouseEvent("contextmenu", {',
+                '    altKey: alt, bubbles: true, cancelable: true, button: 2, clientX: x, clientY: y',
+                '  }));',
+                '  return JSON.stringify({',
+                '    altOnImg: fire(img, true, cx, cy),',
+                '    plainOnImg: fire(img, false, cx, cy),',
+                '    altNoImg: fire(document.body, true, innerWidth - 4, innerHeight - 4)',
+                '  });',
+                '})()',
+              ].join('\n'),
+              returnByValue: true,
+            });
+            const er = String((ev.result && ev.result.value) || '');
+            check('Alt + 右键在图上被内容脚本接管（已 preventDefault）', /"altOnImg":false/.test(er), er.slice(0, 160));
+            check('不按 Alt 时普通右键不被抢（页面自身菜单照常）', /"plainOnImg":true/.test(er), er.slice(0, 160));
+            check('Alt + 右键点空白处不误拦', /"altNoImg":true/.test(er), er.slice(0, 160));
+            pc.close();
+          } else {
+            check('Alt + 右键回归探针拿到了页面连接', false, '缺少 webSocketDebuggerUrl');
+          }
+
           // 反推提示词是后台直接打 127.0.0.1:8188。这条先确认「后台能访问本机端口」
           // —— Private Network Access 之类的策略只要拦了，ComfyUI 那条路就整条不通，
           // 而且报错会是含糊的 Failed to fetch。

@@ -6,7 +6,7 @@ importScripts('lib/util.js', 'lib/store.js', 'lib/webdav.js', 'lib/saver.js', 'l
 
 const CC = self.CC;
 
-const VERSION = '1.6.1';
+const VERSION = '1.6.2';
 const CAPTURE_GAP = 320; // 两次 captureVisibleTab 之间的最小间隔（配额：2 次/秒）
 
 /* ================= 平台信息 =================
