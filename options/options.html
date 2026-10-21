@@ -96,17 +96,17 @@
     <div class="grid2">
       <div class="field">
         <label for="dirTemplate">子目录模板</label>
-        <input type="text" id="dirTemplate" placeholder="{yyyy}-{mm}-{dd}">
+        <input type="text" id="dirTemplate" placeholder="{yyyy}-{mm}">
       </div>
       <div class="field">
         <label for="nameTemplate">文件名模板</label>
-        <input type="text" id="nameTemplate" placeholder="{hh}{mi}{ss}-{page}-{n}">
+        <input type="text" id="nameTemplate" placeholder="{yyyy}{mm}{dd}-{hh}{mi}{ss}-{host}-{w}x{h}">
       </div>
     </div>
     <div class="tokens">
       可用占位符：
       <code>{yyyy}</code><code>{mm}</code><code>{dd}</code><code>{hh}</code><code>{mi}</code><code>{ss}</code>
-      <code>{page}</code><code>{host}</code><code>{type}</code><code>{n}</code><code>{w}</code><code>{h}</code><code>{rnd}</code>
+      <code>{page}</code><code>{host}</code><code>{type}</code><code>{n}</code><code>{name}</code><code>{ts}</code><code>{w}</code><code>{h}</code><code>{rnd}</code>
       <button class="link" id="resetTpl">恢复默认</button>
     </div>
     <div class="preview">
@@ -120,6 +120,7 @@
       上面的「预览」就是最终相对路径。
     </p>
     <p class="tip"><code>{type}</code> 取值：<code>region</code> 区域 · <code>viewport</code> 可视区 · <code>fullpage</code> 整页 · <code>batch</code> 批量 · <code>single</code> 单图 · <code>video</code> 视频封面</p>
+    <p class="tip"><code>{host}</code> 是图片来源站的域名（去掉 www.）；<code>{name}</code> 是原始文件名；<code>{ts}</code> 是时间戳，适合放在末尾当防撞后缀</p>
   </section>
 
   <!-- ============ 输出格式 ============ -->
@@ -161,12 +162,25 @@
       <label class="check"><input type="checkbox" id="altRightClick"><span>Alt + 右键 直接采集该图片</span></label>
       <label class="check"><input type="checkbox" id="skipDuplicate"><span>跳过重复图片（按内容 SHA-256 判断）</span></label>
       <label class="check"><input type="checkbox" id="toastInPage"><span>在页面右下角显示操作提示</span></label>
+      <label class="check"><input type="checkbox" id="pinSaveMirror"><span>Pinterest：我点「保存」时，顺手也存一份到本地</span></label>
     </div>
     <div class="field" style="max-width:280px">
       <label for="minSize">图片最小边长过滤（px）</label>
       <input type="number" id="minSize" min="0" max="2000" step="10">
     </div>
     <p class="tip">小于该边长的图片不会被批量采集选中，用于过滤图标、占位图。</p>
+    <p class="tip">
+      Pinterest 那一项只在 <strong>pinterest.com</strong> 生效：你在页面上点自己的「保存」时，
+      扩展同时把这张图（自动换算成 originals 原图）存一份到素材库。<strong>不会</strong>打断或改动
+      Pinterest 的保存动作，也不会替你发任何内容。默认关闭。
+    </p>
+    <p class="tip">
+      点了保存却没反应？打开下面的<strong>诊断模式</strong>，再回 Pinterest 点一次 —— 页面右下角会直接告诉你
+      断在哪一步（开关没开 / 没认出保存按钮 / 认出了却找不到图），并把落点上的元素名和尺寸列出来。
+    </p>
+    <div class="checks">
+      <label class="check"><input type="checkbox" id="pinMirrorDebug"><span>Pinterest 保存镜像：诊断模式（排查完记得关掉）</span></label>
+    </div>
   </section>
 
   <!-- ============ 反推提示词 ============ -->

@@ -197,6 +197,83 @@ check(
   CC.pinimgOriginal('https://i.pinimg.com.evil.com/236x/a/b/d.jpg') === ''
 );
 
+/* ---- v1.7.3：originals 不一定存在，中间要有一档可用的尺寸 ---- */
+// 实测证据：i.pinimg.com/originals/bf/66/d8/bf66d848…jpg → 403 AccessDenied，
+// 而同路径的 236x → 200（17.7 KB）。也就是「推出来的原图」经常根本不存在。
+check(
+  'pinimgSized 把缩略图尺寸段换成指定尺寸',
+  CC.pinimgSized(PIN_THUMB, '736x') === 'https://i.pinimg.com/736x/ab/cd/ef/abcdef1234.jpg',
+  CC.pinimgSized(PIN_THUMB, '736x')
+);
+check(
+  'pinimgSized 对 originals / 带高度的尺寸段同样生效',
+  CC.pinimgSized('https://i.pinimg.com/originals/a/b/c/d.jpg', '564x') ===
+    'https://i.pinimg.com/564x/a/b/c/d.jpg' &&
+    CC.pinimgSized('https://i.pinimg.com/236x148/a/b/c/d.jpg', '1200x') ===
+      'https://i.pinimg.com/1200x/a/b/c/d.jpg'
+);
+check(
+  'pinimgSized 拒绝非法尺寸、非 pinimg 域名、仿冒域名',
+  CC.pinimgSized(PIN_THUMB, 'huge') === '' &&
+    CC.pinimgSized(PIN_THUMB, '736') === '' &&
+    CC.pinimgSized('https://example.com/236x/a.jpg', '736x') === '' &&
+    CC.pinimgSized('https://i.pinimg.com.evil.com/236x/a/b/d.jpg', '736x') === ''
+);
+// 阶梯本身：单测只验函数，这里验后台真的把它用上了（否则函数是死的）
+const bgSrcEarly = fs.readFileSync(path.join(root, 'background.js'), 'utf8');
+const contentSrcEarly = fs.readFileSync(path.join(root, 'content/content.js'), 'utf8');
+check(
+  'singleSave 在 originals 与页面缩略图之间插了尺寸阶梯',
+  /for \(const size of \['1200x', '736x', '564x'\]\)/.test(bgSrcEarly) &&
+    /CC\.pinimgSized\(payload\.url, size\)/.test(bgSrcEarly)
+);
+check(
+  '降级时把「实际用的尺寸」带回给调用方（否则提示无法区分原图/缩略图）',
+  /saved\.downgraded = used !== payload\.url/.test(bgSrcEarly) &&
+    /saved\.sizeTag = m \? m\[1\] : ''/.test(bgSrcEarly)
+);
+check(
+  '两条保存路径都会在降级时说明原因（Alt+右键 / Pinterest 镜像）',
+  (contentSrcEarly.match(/原图缺失，存的是 /g) || []).length >= 2
+);
+
+/* ---- 上下文失效：刷新扩展后没 F5 的标签页，必须自述而不是伪装成「保存失败」 ---- */
+check(
+  '内容脚本先确认上下文还在，再发消息',
+  /function runtimeAlive\(\)/.test(contentSrcEarly) &&
+    /if \(!runtimeAlive\(\)\) return resolve/.test(contentSrcEarly)
+);
+check(
+  '浏览器的英文 lastError 被翻成「下一步该做什么」',
+  /function bgError\(/.test(contentSrcEarly) &&
+    /MSG_STALE/.test(contentSrcEarly) &&
+    /按 F5 刷新本页再试/.test(contentSrcEarly)
+);
+check(
+  '后台无响应不再被当成「成功」（空回执也要走失败分支）',
+  /res == null\) return resolve\(Object\.assign\(\{ ok: false \}/.test(contentSrcEarly)
+);
+check(
+  '两条采集路径都用 stale 标记决定是否强制/加长提示',
+  (contentSrcEarly.match(/res && res\.stale/g) || []).length >= 2
+);
+check(
+  'single:save 的异常自己也写 lastError（done 的 catch 不写，异常会变成无处可查）',
+  /'内部异常：'/.test(bgSrcEarly) && /recordLastError\('single:save', m/.test(bgSrcEarly)
+);
+const popupHtmlEarly = fs.readFileSync(path.join(root, 'popup/popup.html'), 'utf8');
+const popupJsEarly = fs.readFileSync(path.join(root, 'popup/popup.js'), 'utf8');
+check(
+  '弹窗能发现「本页脚本是旧版」并直接指着 F5',
+  /id="staleWarn"/.test(popupHtmlEarly) &&
+    /function checkPageScript/.test(popupJsEarly) &&
+    /cc:ping/.test(popupJsEarly)
+);
+check(
+  '弹窗统计给出「上次成功 时间」——判断后台到底有没有收到请求',
+  /上次成功 /.test(popupJsEarly)
+);
+
 /* ==========================================================================
  * B. background.js 的平台分流
  * ========================================================================== */
@@ -789,7 +866,7 @@ const bgSrc = read('background.js');
 const comfySrc = read('lib/comfy.js');
 const offSrc = read('offscreen.js');
 
-check('manifest 版本与后台常量一致', manifest.version === '1.6.5', manifest.version);
+check('manifest 版本与后台常量一致', manifest.version === (bgSrc.match(/const VERSION = '([^']+)'/) || [])[1], manifest.version);
 
 // 剪贴板：MV3 里唯一稳定的路径是 offscreen + clipboardWrite，两者缺一不可
 check('manifest 申请了 offscreen 权限', (manifest.permissions || []).includes('offscreen'), JSON.stringify(manifest.permissions));
@@ -949,6 +1026,7 @@ const VERSION_SPOTS = [
   ['manifest.json', /"version"\s*:\s*"([\d.]+)"/],
   ['background.js', /const VERSION = '([\d.]+)'/],
   ['popup/popup.html', /id="ver">v([\d.]+)</],
+  ['studio/studio.html', /id="ver">v([\d.]+)</],
   ['content/content.js', /version:\s*'([\d.]+)'/],
   ['help/help.html', /版本 ([\d.]+) ·/]
 ];
@@ -957,6 +1035,113 @@ const versions = VERSION_SPOTS.map(([f, re]) => {
   return { f, v: m ? m[1] : '(未找到)' };
 });
 check('版本号五处一致', new Set(versions.map((x) => x.v)).size === 1, versions.map((x) => `${x.f}=${x.v}`).join(' · '));
+
+/* ---- v1.7.0：在 Pinterest 点「保存」时顺手存一份到本地 ---- */
+section('G. v1.7.0 Pinterest 保存镜像');
+
+check(
+  '能从地址认出 Pinterest 主域',
+  CC.isPinterestUrl('https://www.pinterest.com/pin/123/') && CC.isPinterestUrl('https://pinterest.com/'),
+  String(CC.isPinterestUrl('https://www.pinterest.com/pin/123/'))
+);
+check(
+  '地区域名也认（co.uk / de / com.au / co.kr）',
+  CC.isPinterestHost('pinterest.co.uk') &&
+    CC.isPinterestHost('www.pinterest.de') &&
+    CC.isPinterestHost('pinterest.com.au') &&
+    CC.isPinterestHost('pinterest.co.kr')
+);
+check(
+  '仿冒域名不算 Pinterest',
+  !CC.isPinterestUrl('https://pinterest.com.evil.com/x') &&
+    !CC.isPinterestUrl('https://notpinterest.com/') &&
+    !CC.isPinterestUrl('https://evil.com/?u=pinterest.com')
+);
+check('空值与垃圾输入不抛异常', CC.isPinterestUrl('') === false && CC.isPinterestUrl('not a url') === false);
+
+check(
+  '认中英文保存按钮',
+  CC.pinSaveLabel('保存') && CC.pinSaveLabel('保存到图板') && CC.pinSaveLabel('Save') && CC.pinSaveLabel('Save to board')
+);
+check(
+  '已保存 / 取消 / 收藏夹 / Saved 一律不算',
+  !CC.pinSaveLabel('已保存') && !CC.pinSaveLabel('取消保存') && !CC.pinSaveLabel('收藏夹') && !CC.pinSaveLabel('Saved')
+);
+check(
+  '段落里的「保存」不当按钮（长度上限）',
+  !CC.pinSaveLabel('这张图片的保存状态会随着你选择的图板而变化，请先在上方选择你要保存到的图板再来点保存按钮')
+);
+
+// 镜像代码块：既不打断 Pinterest 的保存，也不能自己重复触发
+const mirrorSec = contentSrc.slice(
+  contentSrc.indexOf('Pinterest「保存」镜像'),
+  contentSrc.indexOf('消息处理')
+);
+check('内容脚本里有保存镜像的入口', mirrorSec.length > 500 && /lastPinMirror/.test(mirrorSec));
+// 判断「有没有调用」，而不是「有没有提到」——镜像段的注释里正大光明写着这两句纪律
+const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+check(
+  '镜像绝不 preventDefault / stopPropagation',
+  !/\.(?:preventDefault|stopPropagation)\s*\(/.test(stripComments(mirrorSec))
+);
+check('同一张图 2.5 秒内只镜像一次', /2500/.test(mirrorSec));
+check('镜像复用 single:save（与 Alt+右键 同一条落盘链路）', /type: 'single:save'/.test(mirrorSec));
+check('镜像取的是大图（走 bigSourceOf）', /bigSourceOf\(img\)/.test(mirrorSec));
+check('只在 Pinterest 站点生效', /ON_PINTEREST/.test(mirrorSec) && /CC\.isPinterestUrl\(location\.href\)/.test(mirrorSec));
+
+check('默认关闭（不擅自往 NAS 写）', /pinSaveMirror: false/.test(storeSrc), 'store.js 的默认值');
+check('内容脚本的兜底设置也有这个开关', /pinSaveMirror: false/.test(contentSrc));
+check(
+  '设置页有开关并接线',
+  /id="pinSaveMirror"/.test(read('options/options.html')) && /pinSaveMirror/.test(read('options/options.js'))
+);
+
+/* ---- v1.7.1：「点了保存没反应」必须能自己说清断在哪一步 ---- */
+check(
+  '诊断模式默认关闭，且设置页能开',
+  /pinMirrorDebug: false/.test(storeSrc) &&
+    /id="pinMirrorDebug"/.test(read('options/options.html')) &&
+    /pinMirrorDebug/.test(read('options/options.js'))
+);
+check(
+  '诊断会把落点上的元素摊开（不用让人去翻混淆的 DOM）',
+  /function describePoint/.test(mirrorSec) && /elementsFromPoint/.test(mirrorSec) && /function nameOf/.test(mirrorSec)
+);
+check(
+  '诊断覆盖三种断点：开关没开 / 没认出按钮 / 认出了找不到图',
+  (mirrorSec.match(/if \(dbg\)/g) || []).length >= 3
+);
+check(
+  '诊断提示不被「页内提示」开关挡住（否则排查时自己也看不见）',
+  /function toast\(text, kind, ms, force\)/.test(contentSrc) && /!settings\.toastInPage && !force/.test(contentSrc)
+);
+check(
+  '弹窗把镜像开关的真实存储值显示出来（先排除「根本没开」）',
+  /pinSaveMirror/.test(read('popup/popup.js')) && /SETTINGS_KEY/.test(read('popup/popup.js'))
+);
+check(
+  '域名判定只有一份实现（弹窗不再自己写正则）',
+  !/const PIN_HOST/.test(read('popup/popup.js')) && /lib\/util\.js/.test(read('popup/popup.html'))
+);
+
+/* ---- v1.7.2：「保存目标未就绪」时状态条必须是一条去设置页的路 ---- */
+// 配置被重置（移除扩展 / 换路径 / 清浏览器数据）后，表现是「保存一直失败但原因只有一行小字」。
+// 这时点状态条如果还是只跑「测试连接」，用户会看到「连接失败」却不知道该填什么。
+check(
+  '未就绪时点状态条去设置页（而不是只报连接失败）',
+  /let targetReady = null/.test(read('popup/popup.js')) &&
+    /if \(targetReady === false\)[\s\S]{0,220}openOptionsPage\(\)/.test(read('popup/popup.js'))
+);
+check(
+  '状态条在未就绪时改掉悬浮提示（否则仍写着「点击测试连接」）',
+  /pillNow\.title = t\.ready \? '点击测试连接' : '点击去设置页填写保存位置'/.test(read('popup/popup.js'))
+);
+// 这条是给人看的：文档里必须明确「更新不要点移除」，否则下次还会丢配置
+check(
+  '说明文档写明「更新不要移除扩展」（移除会清空存储）',
+  /不要点「移除」|不要用「移除」来更新版本/.test(read('README.md')) &&
+    /不要用「移除」来更新版本/.test(read('help/help.html'))
+);
 
 /* ========================================================================== */
 

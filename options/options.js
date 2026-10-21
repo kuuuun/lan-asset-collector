@@ -112,6 +112,8 @@ function syncFormUI() {
   $('#altRightClick').checked = !!settings.altRightClick;
   $('#skipDuplicate').checked = !!settings.skipDuplicate;
   $('#toastInPage').checked = !!settings.toastInPage;
+  $('#pinSaveMirror').checked = !!settings.pinSaveMirror;
+  $('#pinMirrorDebug').checked = !!settings.pinMirrorDebug;
   $('#minSize').value = settings.minSize;
 
   const c = settings.comfy || {};
@@ -267,7 +269,7 @@ function bind() {
   });
 
   /* 行为 */
-  [['#altRightClick', 'altRightClick'], ['#skipDuplicate', 'skipDuplicate'], ['#toastInPage', 'toastInPage']].forEach(
+  [['#altRightClick', 'altRightClick'], ['#skipDuplicate', 'skipDuplicate'], ['#toastInPage', 'toastInPage'], ['#pinSaveMirror', 'pinSaveMirror'], ['#pinMirrorDebug', 'pinMirrorDebug']].forEach(
     ([sel, key]) => {
       $(sel).addEventListener('change', async () => {
         await save({ [key]: $(sel).checked }, true);

@@ -14,6 +14,8 @@
 
   const FALLBACK = {
     altRightClick: true,
+    pinSaveMirror: false,
+    pinMirrorDebug: false,
     minSize: 120,
     toastInPage: true,
     format: 'png',
@@ -62,17 +64,51 @@
 
   /* ================= 与后台通信 ================= */
 
+  /**
+   * 上下文已失效（在 quark://extensions 点过刷新 ↻，但本页没 F5）。
+   *
+   * 这时候本页里还是**旧脚本**：它的 DOM 逻辑照常跑（能定位按钮、能算原图地址、
+   * 甚至能弹 toast），但 `chrome.runtime` / `chrome.storage` 已经断开。
+   * 结果是「保存失败」但后台一条记录都没有 —— 最难查的那种：
+   * 用户看到报错，我们在存储里却什么都找不到。
+   */
+  const MSG_STALE = '扩展刚更新过，本页脚本已失效 —— 按 F5 刷新本页再试';
+  const MSG_NORESP = '后台没有响应（可能刚被浏览器回收）—— 再点一次，或刷新本页';
+
+  function runtimeAlive() {
+    try {
+      return !!(chrome && chrome.runtime && chrome.runtime.id);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /** 把浏览器的英文 lastError 翻成「用户下一步该做什么」 */
+  function bgError(message) {
+    const m = String(message || '');
+    if (/context invalidated|Extension context invalidated/i.test(m)) {
+      return { error: MSG_STALE, stale: true };
+    }
+    if (/Receiving end does not exist|message port closed|Could not establish connection/i.test(m)) {
+      return { error: MSG_NORESP, stale: true };
+    }
+    return { error: m };
+  }
+
   function bg(msg) {
     return new Promise((resolve) => {
+      if (!runtimeAlive()) return resolve(Object.assign({ ok: false }, bgError('context invalidated')));
       try {
         chrome.runtime.sendMessage(msg, (res) => {
           const err = chrome.runtime.lastError;
+          if (err) return resolve(Object.assign({ ok: false }, bgError(err.message)));
           // 后台被回收 / 没接上时 res 是 undefined，调用方紧接着取属性会抛异常；
           // 统一兜成空对象，让调用方只需判断 ok / error 两个字段。
-          resolve(err ? { error: err.message } : (res == null ? {} : res));
+          if (res == null) return resolve(Object.assign({ ok: false }, bgError('message port closed')));
+          resolve(res);
         });
       } catch (e) {
-        resolve({ error: String((e && e.message) || e) });
+        resolve(Object.assign({ ok: false }, bgError((e && e.message) || e)));
       }
     });
   }
@@ -81,8 +117,14 @@
 
   let toastBox = null;
 
-  function toast(text, kind, ms) {
-    if (!settings.toastInPage) return;
+  /**
+   * 页内提示。
+   *
+   * @param force 无视「在页面右下角显示操作提示」这个开关 —— 只有诊断模式用。
+   *   诊断模式下使用者**主动要**看见判定过程，被自己的提示开关挡住就白搭了。
+   */
+  function toast(text, kind, ms, force) {
+    if (!settings.toastInPage && !force) return;
     if (!toastBox) {
       toastBox = document.createElement('div');
       toastBox.className = 'ccx-toasts';
@@ -862,18 +904,198 @@
       }).then((res) => {
         closeToast(t);
         if (res && res.ok) {
-          toast(res.duplicated ? '这张图已采集过，已跳过' : '已保存到素材库', res.duplicated ? '' : 'ok', 3000);
+          // 降级说明：原图不存在时后台会退到 736x/564x（甚至页面缩略图），
+          // 不给提示的话「已保存」三个字会掩盖「这张其实糊了」，只能事后翻 NAS 才发现。
+          const tag = res.downgraded && res.sizeTag ? '（原图缺失，存的是 ' + res.sizeTag + '）' : '';
+          toast(
+            res.duplicated ? '这张图已采集过，已跳过' : '已保存到素材库' + tag,
+            res.duplicated ? '' : (tag ? '' : 'ok'),
+            tag ? 4200 : 3000
+          );
           return;
         }
         const why = String((res && (res.error || res.message)) || '未知错误');
         recordErr('alt:save', why, { url: pick.url, page: location.href, w: img.naturalWidth, h: img.naturalHeight });
         // 重载扩展后，已打开的标签页仍挂着**旧的那份脚本**，它的 chrome.runtime 已经作废。
         // 这是「刚才还能用、改完就不动了」最常见的原因，必须说清是刷新页面而不是功能坏了。
-        if (/context invalidated|receiving end does not exist|message port closed/i.test(why)) {
-          toast('扩展刚重载过，这个标签页还挂着旧脚本 —— 按 F5 刷新本页再试', 'err', 6000);
+        // 文案已在 bg() 里统一成中文（MSG_STALE / MSG_NORESP），这里只管放大显示时长。
+        if (res && res.stale) {
+          toast(why, 'err', 6000, true);
           return;
         }
         toast('采集失败：' + why, 'err');
+      });
+    },
+    true
+  );
+
+  /* ================= Pinterest「保存」镜像 ================= */
+
+  /**
+   * 我在 Pinterest 点「保存」的时候，顺手把同一张图存一份到本地。
+   *
+   * 为什么是这个方向（而不是让采集去触发 Pinterest 保存）：Pinterest 没有「收藏
+   * 已有 pin」的 API，自己去点页面上的保存属于会被封的路子；而用户本来就要保存这一次，
+   * 我们只是同时留个底 —— 不涉及对外发布、不需要 token、也不会 30 天过期。
+   *
+   * 三条纪律：
+   *   ① **绝不动事件**（不 preventDefault / 不 stopPropagation）—— Pinterest 自己的保存必须照原样发生
+   *   ② 认按钮的**可访问名**，不认 class —— class 是混淆的，每次发版都变
+   *   ③ 认不出来就安静 —— 这功能是白捡的，不该在页面上乱弹提示
+   */
+  const ON_PINTEREST = CC.isPinterestUrl(location.href);
+
+  /** 点击点上「像保存按钮」的那个元素：aria-label / title / 文字 三选一，外加尺寸上限 */
+  function saveButtonAt(x, y) {
+    const stack = (document.elementsFromPoint && document.elementsFromPoint(x, y)) || [];
+    const fits = (el) => {
+      if (!el || el.nodeType !== 1 || !el.getBoundingClientRect) return false;
+      const r = el.getBoundingClientRect();
+      // 按钮的量级；页头、卡片容器、整块面板都远大于这个盒子
+      if (r.width < 8 || r.height < 8 || r.width > 360 || r.height > 140) return false;
+      return (
+        CC.pinSaveLabel(el.getAttribute && el.getAttribute('aria-label')) ||
+        CC.pinSaveLabel(el.getAttribute && el.getAttribute('title')) ||
+        CC.pinSaveLabel(el.textContent)
+      );
+    };
+    for (const el of stack) {
+      if (fits(el)) return el;
+      // 命中的往往是按钮里的 <span>，往上一层再看一次就够（再往上就落到卡片容器上了，
+      // 那上面也可能糊着「保存」二字，会误判）
+      if (el && fits(el.parentElement)) return el.parentElement;
+    }
+    return null;
+  }
+
+  /**
+   * 这颗「保存」按钮管的是哪张图。
+   *
+   * 瀑布流里按钮和图片在同一张卡片下，中间隔着一串混淆 div —— 所以从按钮往上爬，
+   * 每层看子树里有没有 pinimg 图片。找到之后不能只挑面积最大的：closeup 页的
+   * 右侧推荐位全是大图，会串到别的 pin 上。按「离点击点的距离」打折，取综合分最高的。
+   */
+  function pinImageFor(btn, x, y) {
+    let box = btn;
+    for (let i = 0; i < 14 && box; i++) {
+      const imgs = box.querySelectorAll ? box.querySelectorAll('img') : [];
+      let best = null;
+      let bestScore = 0;
+      for (const im of imgs) {
+        const u = String(im.currentSrc || im.src || '');
+        if (!/^https?:\/\/[^/]*pinimg\.com\//i.test(u)) continue;
+        const r = im.getBoundingClientRect();
+        const dx = x >= r.left && x <= r.right ? 0 : Math.min(Math.abs(x - r.left), Math.abs(x - r.right));
+        const dy = y >= r.top && y <= r.bottom ? 0 : Math.min(Math.abs(y - r.top), Math.abs(y - r.bottom));
+        const dist = Math.hypot(dx, dy);
+        if (dist > 900) continue; // 同一容器里太远的那张不归这颗按钮管
+        const area = (im.naturalWidth || r.width) * (im.naturalHeight || r.height);
+        const score = area / (1 + dist / 120);
+        if (score > bestScore) {
+          bestScore = score;
+          best = im;
+        }
+      }
+      if (best) return best;
+      box = box.parentElement;
+    }
+    // 按钮直接盖在图片上时（瀑布流悬停保存），走和 Alt+右键 一样的覆盖层穿透
+    return imageUnderPoint(null, x, y);
+  }
+
+  /** 元素的名字：aria-label → title → 文字。诊断与日志都用它 */
+  function nameOf(el) {
+    if (!el || el.nodeType !== 1) return '';
+    const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim();
+    return (
+      norm(el.getAttribute && el.getAttribute('aria-label')) ||
+      norm(el.getAttribute && el.getAttribute('title')) ||
+      norm(el.textContent)
+    );
+  }
+
+  /**
+   * 诊断用：把点击点上的前几个元素摊开（tagName / 名字 / 尺寸）。
+   *
+   * 「点了没反应」最难的地方是**看不出中间断在哪一步**：可能开关没开、可能按钮没被认出来、
+   * 也可能认出了按钮却找不到图。这段把落点上的元素一并报出来，一眼定位，
+   * 不用让人去 F12 里翻那堆混淆的 class。
+   */
+  function describePoint(x, y) {
+    const stack = (document.elementsFromPoint && document.elementsFromPoint(x, y)) || [];
+    const bits = [];
+    for (const el of stack.slice(0, 4)) {
+      if (!el || el.nodeType !== 1) continue;
+      const r = el.getBoundingClientRect();
+      const nm = nameOf(el).slice(0, 14);
+      bits.push(el.tagName.toLowerCase() + (nm ? '「' + nm + '」' : '') + ' ' + Math.round(r.width) + '×' + Math.round(r.height));
+    }
+    return bits.join(' / ') || '（空）';
+  }
+
+  /* 一次保存可能触发多个 click（按钮里套按钮、React 重渲染）→ 同一张图 2.5 秒内只做一次 */
+  let lastPinMirror = { url: '', at: 0 };
+
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (!ON_PINTEREST) return;
+      // 诊断模式：把每个「为什么没做」都说出来。默认关闭，只在排查「点了没反应」时打开。
+      const dbg = !!settings.pinMirrorDebug;
+      if (!settings.pinSaveMirror) {
+        if (dbg) toast('保存镜像：开关没打开（设置 → 采集行为）', 'err', 5000, true);
+        return;
+      }
+      if (e.button !== 0) return;
+      const btn = saveButtonAt(e.clientX, e.clientY);
+      if (!btn) {
+        if (dbg) {
+          toast('保存镜像：没认出「保存」按钮 · 落点上是 ' + describePoint(e.clientX, e.clientY), 'err', 9000, true);
+        }
+        return;
+      }
+      const img = pinImageFor(btn, e.clientX, e.clientY);
+      if (!img) {
+        if (dbg) toast('保存镜像：认出按钮「' + nameOf(btn).slice(0, 12) + '」但没找到对应的图', 'err', 9000, true);
+        recordErr('pin:no-image', '点到了保存按钮，但附近没找到对应的图片', { page: location.href });
+        return;
+      }
+      // 和 Alt+右键 一样取「大图」：pinimg 的尺寸段能逆推出 originals
+      const pick = bigSourceOf(img);
+      if (!pick || !pick.url) {
+        if (dbg) toast('保存镜像：图找到了，但读不到它的地址', 'err', 9000, true);
+        recordErr('pin:no-url', '读不到这张图的地址', { page: location.href });
+        return;
+      }
+      const now = Date.now();
+      if (pick.url === lastPinMirror.url && now - lastPinMirror.at < 2500) return;
+      lastPinMirror = { url: pick.url, at: now };
+      if (dbg) {
+        toast('保存镜像：命中「' + nameOf(btn).slice(0, 10) + '」→ ' + pick.url.slice(-28), '', 3500, true);
+      }
+
+      const alt = pick.alt && pick.alt !== pick.url ? pick.alt : '';
+      bg({
+        type: 'single:save',
+        url: pick.url,
+        fallbackUrl: alt,
+        w: img.naturalWidth,
+        h: img.naturalHeight,
+        pageTitle: document.title,
+        sourceUrl: location.href
+      }).then((res) => {
+        if (res && res.ok) {
+          if (!res.duplicated) {
+            const tag = res.downgraded && res.sizeTag ? '（原图缺失，存的是 ' + res.sizeTag + '）' : '';
+            toast('已顺手存一份到素材库' + tag, tag ? '' : 'ok', tag ? 4200 : 2200);
+          }
+          return;
+        }
+        const why = String((res && (res.error || res.message)) || '未知错误');
+        recordErr('pin:save', why, { url: pick.url, page: location.href });
+        // 上下文失效时这个提示必须穿透「页内提示」开关：用户之所以来问，就是因为
+        // 之前那条失败提示里塞的是浏览器英文原文，看不出该做什么。
+        toast('顺手存本地失败：' + why, 'err', res && res.stale ? 6000 : 3200, !!(res && res.stale));
       });
     },
     true
@@ -910,7 +1132,7 @@
   async function handle(msg) {
     switch (msg.type) {
       case 'cc:ping':
-        return { ok: true, version: '1.6.5' };
+        return { ok: true, version: '1.7.4' };
 
       case 'cc:toast':
         toast(msg.text || '', msg.kind || '', msg.ms);

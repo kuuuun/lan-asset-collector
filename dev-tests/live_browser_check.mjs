@@ -446,6 +446,18 @@ try {
         const manifestVer = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8')).version;
         check(`弹窗显示的版本号是最新的（${pi.ver}）`, pi.ver === 'v' + manifestVer, `${pi.ver} vs v${manifestVer}`);
 
+        // v1.7.1：弹窗开始共用 lib/util.js 的域名判定。脚本标签写错（路径 / CSP）时
+        // CC 会是 undefined，而 setupPinEntry 里的 try/catch 会把它悄悄吞掉 ——
+        // 只有在这里直接问一句才知道到底加载上没有。
+        const shared = await c.send('Runtime.evaluate', {
+          expression:
+            "JSON.stringify({ has: typeof CC !== 'undefined', pin: typeof CC === 'undefined' ? '' : CC.isPinterestUrl('https://www.pinterest.com/pin/1/'), fake: typeof CC === 'undefined' ? true : CC.isPinterestUrl('https://pinterest.com.evil.com/') })",
+          returnByValue: true,
+        });
+        let sh = {};
+        try { sh = JSON.parse((shared.result && shared.result.value) || '{}'); } catch (_) {}
+        check('弹窗里加载到了共用的域名判定（且仿冒域名不算）', sh.has === true && sh.pin === true && sh.fake === false, JSON.stringify(sh));
+
         // v1.5.7：弹窗里那行菜单状态必须自己变成「已就绪」。
         // 这条同时验证了诊断入口本身可用 —— 使用者打开面板就能直接看到右键菜单注册上没有，
         // 不用再去猜「右键里为什么没有这一项」。
@@ -747,6 +759,65 @@ try {
             check('Alt + 右键在图上被内容脚本接管（已 preventDefault）', /"altOnImg":false/.test(er), er.slice(0, 160));
             check('不按 Alt 时普通右键不被抢（页面自身菜单照常）', /"plainOnImg":true/.test(er), er.slice(0, 160));
             check('Alt + 右键点空白处不误拦', /"altNoImg":true/.test(er), er.slice(0, 160));
+
+            // ---------- v1.7.0 Pinterest 保存镜像：绝不能在不该管的站点上抢「保存」 ----------
+            // 判据放在「开关已打开」这一侧：页面里真有一个写着「保存」的按钮、点它，
+            // 在非 Pinterest 域名上必须什么都不发生 —— 否则等于全网劫持保存键。
+            // 反过来（在真 Pinterest 上会不会生效）只能由人在网站上点一次确认，
+            // 这里不给假保证。
+            await swCdp
+              .send('Runtime.evaluate', {
+                expression: 'self.CC.setSettings({ pinSaveMirror: true })',
+                awaitPromise: true,
+                returnByValue: true,
+              })
+              .catch(() => {});
+            await pc.send('Runtime.evaluate', {
+              expression: [
+                '(() => {',
+                '  window.__toast0 = document.querySelectorAll(".ccx-toast").length;',
+                '  const b = document.createElement("button");',
+                '  b.id = "fakeSave";',
+                '  b.textContent = "保存";',
+                '  b.style.cssText = "position:fixed;left:20px;top:20px;width:90px;height:40px;z-index:99999";',
+                '  document.body.appendChild(b);',
+                '  const r = b.getBoundingClientRect();',
+                '  b.dispatchEvent(new MouseEvent("click", {',
+                '    bubbles: true, cancelable: true, button: 0,',
+                '    clientX: r.left + r.width / 2, clientY: r.top + r.height / 2',
+                '  }));',
+                '  return location.hostname;',
+                '})()',
+              ].join('\n'),
+              returnByValue: true,
+            });
+            await sleep(800);
+            const after = await pc.send('Runtime.evaluate', {
+              expression:
+                'JSON.stringify({ host: location.hostname, toasts: [...document.querySelectorAll(".ccx-toast")].map((e) => e.textContent) })',
+              returnByValue: true,
+            });
+            const err2 = await swCdp.send('Runtime.evaluate', {
+              expression:
+                'chrome.storage.local.get("collector.lastError").then((r) => JSON.stringify((r && r["collector.lastError"]) || {}))',
+              awaitPromise: true,
+              returnByValue: true,
+            });
+            const aj = JSON.parse((after.result && after.result.value) || '{}');
+            const ej = String((err2.result && err2.result.value) || '{}');
+            check(
+              '非 Pinterest 页面点「保存」不会触发镜像',
+              !/顺手/.test(JSON.stringify(aj.toasts || [])) && !/"where":"pin:/.test(ej),
+              `${JSON.stringify(aj).slice(0, 100)} ${ej.slice(0, 100)}`
+            );
+            await swCdp
+              .send('Runtime.evaluate', {
+                expression: 'self.CC.setSettings({ pinSaveMirror: false })',
+                awaitPromise: true,
+                returnByValue: true,
+              })
+              .catch(() => {});
+
             pc.close();
           } else {
             check('Alt + 右键回归探针拿到了页面连接', false, '缺少 webSocketDebuggerUrl');

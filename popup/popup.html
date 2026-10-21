@@ -12,13 +12,17 @@
     <div class="brand">
       <img class="logo" src="../assets/icons/48.png" alt="">
       <div>
-        <div class="name">素材采集器 <span class="ver" id="ver">v1.6.5</span></div>
+        <div class="name">素材采集器 <span class="ver" id="ver">v1.7.4</span></div>
         <button class="status" id="status" title="点击测试连接">
           <i class="dot"></i><span id="statusText">检测中…</span>
         </button>
       </div>
     </div>
   </header>
+
+  <!-- 刷新扩展（↻）后，已打开的标签页里还挂着旧脚本：它的 chrome.runtime 已断开，
+       点什么都只会得到「保存失败」。这一条在弹窗里直接点出来，省掉一轮猜测。 -->
+  <p class="stale" id="staleWarn" hidden></p>
 
   <div class="row3">
     <button class="tile" data-action="region">
@@ -129,6 +133,7 @@
 
   <div class="hint" id="hint">在图片上点右键即可一键剪藏；也可用 Alt+右键</div>
 </div>
+<script src="../lib/util.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 # 交接说明 · 素材采集器（LAN Collector）
 
 > 交接对象：接手维护这个扩展的开发者。
-> 当前版本 **v1.6.5**，交接日期 **2026-10-10**（v1.5.8 / v1.5.9 补充于 2026-10-12，v1.6.0 ~ v1.6.5 补充于 2026-10-19）。
+> 当前版本 **v1.7.4**，交接日期 **2026-10-10**（v1.5.8 / v1.5.9 补充于 2026-10-12，v1.6.0 ~ v1.6.5 补充于 2026-10-19，v1.7.0 ~ v1.7.4 补充于 2026-10-21）。
 > 这份文件只讲「怎么接手、别踩哪些坑」，功能怎么用看 [README.md](README.md)。
 
 ---
@@ -52,14 +52,14 @@
 manifest.json          MV3 清单。权限：tabs / activeTab / scripting / storage /
                        contextMenus / notifications / offscreen / clipboardWrite + <all_urls>
 background.js  (1,050) service worker：菜单注册、快捷键、截屏编排、整页拼接调度、消息总线、剪贴板与 ComfyUI 编排
-lib/util.js    (300)   模板渲染 + 路径清洗（三平台并集规则）+ 哈希 + 字节↔dataURL + 各类解析
+lib/util.js    (370)   模板渲染 + 路径清洗（三平台并集规则）+ 哈希 + 字节↔dataURL + 各类解析 + **Pinterest 判定（域名 / 保存按钮）**
 lib/store.js   (200)   设置读写（chrome.storage.local）+ IndexedDB（目录句柄/去重指纹/序号）
 lib/webdav.js  (390)   WebDAV 客户端：探测 / 逐级 MKCOL / PUT（含同名保护）/ **列目录（Depth:1）** / 取字节
 lib/saver.js   (211)   保存层：通道分发（webdav / fsa）+ 目标校验 + 取图
 lib/imageproc.js(118)  页面内 Canvas 处理：裁剪 / 格式转换 / 整页拼接（跑在内容脚本里）
 lib/comfy.js   (230)   **ComfyUI 客户端**：ping / upload / 排队 / 轮询 / 取文本 + Krea 2 反推指令
 offscreen.html/.js     **offscreen 文档**：写系统剪贴板、把大图压成缩略图（SW 里没有 DOM）
-content/content.js(930) 区域选框、Alt+右键（大图推断）、批量面板、整页滚屏与拼接、页内提示、**本页最大图**
+content/content.js(1,090) 区域选框、Alt+右键（大图推断）、批量面板、整页滚屏与拼接、页内提示、**本页最大图**、**Pinterest 保存镜像**
 popup/         功能面板（对齐 Billfish 布局，含右键菜单状态自检行、复制原图、素材工作台入口）
 studio/        **素材工作台**：只扫当前目录、缩略图墙、复制图片 / 反推提示词 / 打开原图
 options/       设置页（含反推提示词的 ComfyUI 配置）
@@ -359,6 +359,122 @@ else:                        middlewares.append(create_origin_only_middleware())
 
 ---
 
+### 17. Pinterest「保存」镜像：**跟随用户动作**，别去自动化 Pinterest（v1.7.0）
+
+需求原话是「在 Pinterest 右键保存时，同时收藏到 Pinterest」以及反向的「我点 Pinterest 的保存时，
+同时存一份到本地」。**反向那条才是能做的**，别把方向搞回去：
+
+| 想要的效果 | 可行吗 | 为什么 |
+|---|---|---|
+| 采集时自动收藏到 Pinterest（新建 pin） | 要 API v5 + OAuth，能自动 | 但结果是「你自己发的新 pin」，不是收藏原 pin；token 约 30 天过期；等于往（可能公开的）板上发东西 |
+| 采集时自动收藏到 Pinterest（收藏原 pin） | ❌ | Pinterest 没有 save-existing-pin 的 API；模拟点击属于会被封的路子 |
+| **Pinterest 点保存 → 本地留一份** | ✅ 已实现 | 不动事件、不要凭证、不对外发布 |
+
+实现要点（`content/content.js` 的「Pinterest 保存镜像」段）：
+
+- 触发判据是**按钮的可访问名**（`aria-label` / `title` / 文字），判定函数 `CC.pinSaveLabel()`
+  在 `lib/util.js`。**不要改成按 class 找** —— Pinterest 的 class 是混淆的（`X8m 1OV`），每次发版都变
+- 找按钮用 `document.elementsFromPoint()` 的栈（和 `Alt`+右键 穿透覆盖层同一套思路），
+  而不是从 `e.target` 往上爬：命中的往往是按钮里的 `<span>`
+- 找图：从按钮往上最多 14 层，看子树里的 pinimg 图；**按距离打折再比面积** ——
+  只比面积会在 closeup 页挑到右侧推荐位的大图
+- **绝不 `preventDefault` / `stopPropagation`**：Pinterest 的保存必须照原样发生。静态闸门有断言守着
+  （用 `stripComments` 判「有没有调用」，否则注释里的这两句话就会误报）
+- 同一张图 **2.5 秒**内只镜像一次（一次保存会连发多个 click）
+- 域名判定 `CC.isPinterestUrl()`：`pinterest.com` / `pinterest.co.uk` / `pinterest.com.au` 等，
+  **必须用末尾锚点**，否则 `pinterest.com.evil.com` 会被当成 Pinterest
+- 认不出就安静；只有「抓到按钮但取不到图」才写 `collector.lastError`（`pin:no-image` / `pin:no-url` / `pin:save`）
+
+⚠️ 这一条**依赖 Pinterest 的页面结构**，属于会随站点改版失效的功能 —— 和我司其它「站点侧的坑」一样，
+失败要能优雅退化（设置里关掉即可，`Alt`+右键 与弹窗「采集本页大图」仍在）。
+
+---
+
+### 18. 更新版本用 **刷新 ↻**，永远不要「移除」重加（v1.7.2，2026-10-21 踩过）
+
+**移除扩展 = 删除它的存储。** `chrome.storage.local` 里的 WebDAV 账密、常用位置、各项开关、
+累计统计全部清空，代码不会给你任何提示。表现极具误导性：
+
+- Alt+右键 报「创建目录失败」→ 因为 `baseUrl` 退回 `DEFAULTS` 里的 `192.168.31.206`，从单位电脑不可达
+- 之后又报「WebDAV 账号未填写」→ 因为 `webdav.user` 变空了（`CC.checkTarget` 的判据）
+- Pinterest 镜像「点了保存什么也没有」→ 因为 `pinSaveMirror` 与 `pinMirrorDebug` 都回到 `false`，
+  两条静默路径叠加，看起来就是功能全坏
+
+排查时别再猜代码，**直接读 LevelDB 里的明文设置**最快（`v1.7.1` 就是这么定的案）：
+
+```bash
+cd "$LOCALAPPDATA/Quark/User Data/Default/Local Extension Settings/<扩展ID>"
+python -c "
+import glob
+for f in glob.glob('*.log'):
+    d=open(f,'rb').read(); i=d.find(b'collector.settings.v1')
+    if i>=0: print(d[i:i+1200].decode('utf-8','replace'))
+"
+```
+
+看到 `"user":""`、`"baseUrl":"http://192.168.31.206..."`、`"pinSaveMirror":false` 就是被重置了。
+
+因此：**指引里只写「点扩展卡片上的刷新 ↻」**。只有安装路径变化（ID 随之改变）才需要移除重加，
+那种情况必须先「导出配置」（设置页底部）→ 重装 → 「导入配置」。离开前顺手把旧 ID 目录整份
+复制成新 ID 目录也能保住数据（见「约定速查」里的存储位置）。
+
+---
+
+### 19. `originals` 不一定存在 —— 抓图回退必须走「尺寸阶梯」（v1.7.3）
+
+`CC.pinimgOriginal()` 只是**路径改写**，不代表那个对象在 CDN 上真的有一份。实测同一条路径：
+
+| 尺寸段 | 结果 |
+|---|---|
+| `originals` | **403 AccessDenied**（S3 风格，= 对象不存在） |
+| `1200x` / `736x` / `564x` / `474x` | 200 · 25,069 B（同一条 pin 的最大可用档） |
+| `236x` | 200 · 17,756 B |
+
+也就是说外站抓来的 pin 常常**没有 originals**，只有中等尺寸。原来的回退链是
+「originals → 页面上那张（236x）」，一步掉到 17 KB 甚至 4 KB，看起来就是「采集的不是大图」。
+
+所以 `singleSave` 里的候选顺序固定为：
+
+```
+payload.url（originals 或 dataUrl）
+  → 1200x → 736x → 564x        ← CC.pinimgSized() 逐个改写，只对 pinimg 生效
+  → payload.fallbackUrl（页面渲染的那张，最后兜底）
+```
+
+配套两条铁律：
+- **必须把实际用的尺寸带回调用方**（`saved.sizeTag` / `saved.downgraded`）。以前 4 KB 缩略图和
+  178 KB 原图给的是同一句「已保存」，使用者只能事后翻 NAS 才发现糊了。降级时提示
+  「原图缺失，存的是 736x」。
+- **不要靠「文件大小」判断是否降级** —— `fetchForClip` 抓失败会退到页面上下文重抓，
+  体积受压缩影响大。判据只能是「最终 `used` 是否等于首选 `payload.url`」。
+
+### 20. 刷新扩展（↻）之后，页面里的旧脚本会「看起来在工作」（v1.7.4，2026-10-21 踩过）
+
+`quark://extensions` 点 ↻ 只换**后台**和**新打开页面**里的脚本；**已打开的标签页不会自动换**。
+旧 content script 的 `chrome.runtime` 已经断开，但它的 DOM 逻辑完全照常：
+
+| 还能做 | 已经不能 |
+|---|---|
+| 认按钮文字、`elementsFromPoint` 找图、算 `originals` 地址 | `chrome.runtime.sendMessage`（抛 `Extension context invalidated`） |
+| 弹 toast（纯 DOM 操作） | `chrome.storage.local.set`（于是**失败也写不进 `collector.lastError`**） |
+
+结果是最难查的一种现象：**用户看到「保存失败」，而我们的存储里一条记录都没有、`stats.failed` 也不涨**。
+v1.7.3 之前就是这么表现的，用户只能说「报错了」，接手的人无从下手。
+
+三条规矩：
+- **`bg()` 发消息前先查 `chrome.runtime.id`**，失效时直接返回 `{ok:false, stale:true, error:'…按 F5 刷新本页再试'}`；
+  浏览器的 `context invalidated` / `message port closed` / `Receiving end does not exist` 一律译成中文可执行文案。
+  不要把 `lastError.message` 原样给用户看 —— 那等于没有信息。
+- **业务分支里的 `.catch()` 要自己写 `recordLastError`**。`onMessage` 里的 `done()` 虽然也有 catch，
+  但它只负责 `sendResponse`，不写存储 —— 异常会变成「有提示、无痕迹」。
+- **弹窗要做版本比对**：`checkPageScript()` 用 `cc:ping` 拿到本页脚本的 `version`，与
+  `chrome.runtime.getManifest().version` 不一致就出黄条指名 F5。这是唯一能自动发现该状态的地方
+  （上下文失效后消息通道就没了，只能趁它还连着时比）。
+
+排查速记：**「有提示但存储里查不到」＝ 请求没发出去**，不是后端失败。先看弹窗统计里的「上次成功 时间」动没动。
+
+---
+
 ## 五、关于夸克浏览器：一条必须先讲清的前提
 
 **夸克 v6.10+ 会「自绘」右键菜单覆盖原生菜单。** 由 `context_menu_injector.js` 在
@@ -400,7 +516,7 @@ AppData/Local/Quark/User Data/Default/Secure Preferences
 ### 1. 静态闸门（最快，不需要任何服务）
 
 ```bash
-node dev-tests/platform_check.mjs        # 预期 162 / 0
+node dev-tests/platform_check.mjs        # 预期 200 / 0
 ```
 
 加载**真实的** `lib/util.js` 与 `background.js`（用最小 `chrome` stub）分五段断言：
@@ -417,7 +533,7 @@ node dev-tests/platform_check.mjs        # 预期 162 / 0
 ### 2. 真机闸门（最重要的一套）
 
 ```bash
-node dev-tests/live_browser_check.mjs    # 预期 51 / 0
+node dev-tests/live_browser_check.mjs    # 预期 53 / 0
 ```
 
 用 CDP 驱动 **Edge 无头**加载本扩展（独立临时 profile，用完即删）：
@@ -526,6 +642,19 @@ python tools/package.py --check    # 只校验不打包
   换真实照片用 `COMFY_TEST_IMAGE=<路径>` 复跑才作数
 - ⚠️ 单位电脑（3y-guok-PC）的 ComfyUI **当前只监听 `127.0.0.1:8188`**，局域网 IP 直连返回 000。
   要跨机用，必须先在启动器里打开「允许局域网访问」/ 加 `--listen 0.0.0.0` 并重启
+- ✅ **Pinterest 保存镜像已在真站点上验证通过**（2026-10-21 12:23，K 的夸克 + 单位 NAS）。
+  正向链路成立：点「保存」→ 内容脚本 `pin:save` → 后台抓 `originals` → 写 NAS，
+  产出 `2026-10-21/122321-(21)-Pinterest-9.jpg` 等 3 个文件，字节合计 239,349 —— 与
+  `stats.bytes` 精确相等，属实证而非「看起来像成功」。
+  反向（非 Pinterest 域名不触发）由 `live_browser_check.mjs` 常驻断言守住。
+
+  另一侧仍要注意：**这台机器的无头浏览器验不了正向**（`--host-resolver-rules` 把 pinterest.com
+  指到本地夹具时，Chromium 的 HTTPS 升级会改成 `https://` 导致 TLS 失败，加 `--disable-features=HttpsUpgrades`
+  也压不住），所以这条只能靠真机人工确认，不要试图写成自动化用例。
+  再出问题时**先开诊断模式**（设置 → 采集行为 → 「Pinterest 保存镜像：诊断模式」，v1.7.1）：
+  再点一次保存，右下角会直接报出断点（开关没开 / 没认出按钮 / 认出了找不到图 / 命中），
+  没认出按钮时还会把落点上的 `tagName「名字」宽×高` 列出来 —— 拿这一行就能补 `CC.pinSaveLabel()`，
+  不用让使用者去 F12 里翻混淆的 DOM。诊断提示用 `toast(..., force=true)`，不受「页内提示」开关影响
 
 ---
 
@@ -553,6 +682,11 @@ python tools/package.py --check    # 只校验不打包
 | v1.6.3 | **失败留痕**：内容脚本与后台都往 `collector.lastError` 写一份（含 where / message / url / at），弹窗把它显示成「上次失败 时间 · 原因」（超 24h 不显示）。五秒的页内提示说不清的事，事后能回看；静态闸门 +5（149 → 154） |
 | v1.6.4 | **反推入口不再隐形**：工作台侧栏从「选中才出现」改成常驻 —— 未选中时写明「点任意一张图，这里会出现：复制图片 / 反推提示词 / 打开原图」，并显示当前目录图片数与 ComfyUI 在线状态；窄窗口面板改到上方。真机闸门 +1（48 → 49） |
 | v1.6.5 | **修「上传图片失败（HTTP 403）」**：ComfyUI 的 `create_origin_only_middleware` 在 Host 为回环时要求 POST 的 Origin 同名，扩展的 `chrome-extension://` 必被 403（GET 不带 Origin 所以「测试连接」是通的）。用 `declarativeNetRequest` 只对配置的 ComfyUI 地址改写 `Origin` / `Sec-Fetch-Site`，非回环地址自动撤规则；权限 +`declarativeNetRequest`。真机端到端出词 21.6s / 1701 字符。静态 +8（154 → 162）、真机 +2（49 → 51） |
+| v1.7.0 | **Pinterest 保存镜像**：在 pinterest.com 点自己的「保存」时，顺手把同一张图（自动换算 `originals`）存一份到本地。跟随用户动作而不是自动化站点 —— 不要凭证、不对外发布、不动事件；认按钮的可访问名而非 class，同一张图 2.5s 内只镜像一次，只在 Pinterest 域名生效。设置里默认**关闭**。静态 +16（162 → 178）、真机 +1（51 → 52） |
+| v1.7.1 | **「点了保存没反应」自己说清断在哪一步**：新增诊断模式（设置 → 采集行为），在 Pinterest 上每次点击都提示判定结果 —— 开关没开 / 没认出按钮（附落点上元素的 tagName「名字」宽×高）/ 认出了找不到图 / 命中并给出原图地址；诊断提示 `toast(..., force)` 不受「页内提示」开关影响。弹窗底部显示镜像的**真实开关状态**（从 storage 读），并把面板里那份漏了末尾锚点的本地域名正则换成交 `CC.isPinterestUrl()`（单一实现）。静态 +6（178 → 184）、真机 +1（52 → 53） |
+| v1.7.2 | **「保存一直失败」不再只藏在状态条里**：保存目标未就绪时，点弹窗顶部状态条**直接打开设置页**（之前只会跑一次测试连接、回一句「连接失败」，用户不知道该填什么）；同时把文档里那条危险的更新指引改掉 —— 新增设计决定 18「更新用刷新 ↻，永远不要移除重加」，因为**移除扩展会连带清空 WebDAV 账密与所有开关**（这一版就是这么踩出来的：移除重装后地址退回默认 `192.168.31.206`、账号变空、Pinterest 两个开关回 false）。静态 +3（184 → 187） |
+| v1.7.3 | **原图缺失时不再直接掉到缩略图**：实测 `i.pinimg.com/originals/...` 对相当一部分 pin 返回 **403 AccessDenied**（同路径 `236x` 却是 200），而原来的回退链只有「originals → 页面那张」，于是这类图直接存成 4~17 KB 的小图。新增 `CC.pinimgSized()` 并在 `singleSave` 里插 `1200x → 736x → 564x` 阶梯（实测 736x 对同一张图返回 25 KB vs 236x 的 17.7 KB，是 CDN 上真实可用的最大档）；同时把实际用的尺寸带回调用方，两条保存路径在降级时明确提示「原图缺失，存的是 736x」——以前 4 KB 缩略图和 178 KB 原图给的是**一模一样**的「已保存」。静态 +6（187 → 193） |
+| v1.7.4 | **「保存失败」不再是一句查不动的话**：现象是 Pinterest 点保存后提示「顺手存本地失败」，但 `collector.lastError` 是空的、`stats.failed` 也没涨 —— 因为**后台没收到请求**。根因是刷新扩展（↻）后已打开标签页仍挂旧脚本，其 `chrome.runtime` 已断开：DOM 逻辑照跑（能认按钮、能弹 toast），消息发不出去、失败也写不进存储，而旧代码把浏览器英文原样塞进提示。修法三层：① `bg()` 先查 `chrome.runtime.id`、把 `context invalidated` / `port closed` 翻成「按 F5 刷新本页再试」并带 `stale` 标记，两条采集路径据此强制/加长提示；② `single:save` 自加 `.catch()` 写 lastError（`done()` 的 catch 只回消息不留痕，异常会变成无处可查）；③ 弹窗新增 `checkPageScript()` 用 `cc:ping` 比对「本页脚本版本 vs 扩展版本」，不一致就顶部出黄条指名 F5；统计里加「上次成功 时间」，时间不动即证明请求没发出。静态 +7（193 → 200） |
 
 ---
 

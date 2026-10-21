@@ -133,6 +133,7 @@ def check(items):
     for rel, pattern in [
         ("background.js", r"const VERSION = '([^']+)'"),
         ("popup/popup.html", r"v(\d+\.\d+\.\d+)"),
+        ("studio/studio.html", r'id="ver">v(\d+\.\d+\.\d+)<'),
         ("content/content.js", r"version: '([^']+)'"),
         ("help/help.html", r"版本 (\d+\.\d+\.\d+)"),
     ]:

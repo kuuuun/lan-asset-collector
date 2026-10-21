@@ -6,7 +6,7 @@ importScripts('lib/util.js', 'lib/store.js', 'lib/webdav.js', 'lib/saver.js', 'l
 
 const CC = self.CC;
 
-const VERSION = '1.6.5';
+const VERSION = '1.7.4';
 const CAPTURE_GAP = 320; // 两次 captureVisibleTab 之间的最小间隔（配额：2 次/秒）
 
 /* ================= 平台信息 =================
@@ -632,11 +632,17 @@ async function singleSave(tab, payload) {
   const target = await CC.checkTarget(settings);
   if (!target.ready) return { ok: false, error: target.reason || '保存目标未就绪' };
 
-  // 首选地址抓不到时，退到 fallbackUrl 再抓一次。
-  // 为什么需要：「大图」常常是**推算**出来的（Pinterest 的 originals），而推算出的地址未必
-  // 真的存在 —— 从外站抓取来的 pin，Pinterest 根本没存原图。宁可拿到缩略图也不空手而归。
+  // 候选地址阶梯：originals → 大尺寸 → 页面渲染的那张。
+  // 为什么不能只有两级：`pinimgOriginal()` 推出来的 `/originals/` **对相当一部分 pin 根本不存在**
+  // （实测 `i.pinimg.com/originals/...` 会回 403 AccessDenied，而同路径的 `236x` 是 200）。
+  // 若下一步直接退到页面那张，拿到的是 236x 缩略图 —— 只有几 KB，放大就糊。
+  // 中间必须插 1200x / 736x / 564x：这几个尺寸在 CDN 上普遍存在，是拿不到原图时的最优解。
   const order = [payload.url];
-  if (payload.fallbackUrl && payload.fallbackUrl !== payload.url) order.push(payload.fallbackUrl);
+  for (const size of ['1200x', '736x', '564x']) {
+    const u = CC.pinimgSized(payload.url, size);
+    if (u && order.indexOf(u) < 0) order.push(u);
+  }
+  if (payload.fallbackUrl && order.indexOf(payload.fallbackUrl) < 0) order.push(payload.fallbackUrl);
 
   let fetched = null;
   let used = payload.url || '';
@@ -659,7 +665,7 @@ async function singleSave(tab, payload) {
   // 只有 http(s) 才适合从地址里猜扩展名；data:/blob: 一律按 mime 定
   const ext = payload.ext || (/^https?:/i.test(used || '') ? guessExt(used, fetched.mime) : CC.extFromMime(fetched.mime));
 
-  return await CC.saveAsset({
+  const saved = await CC.saveAsset({
     bytes: fetched.bytes,
     mime: fetched.mime,
     ext,
@@ -672,6 +678,17 @@ async function singleSave(tab, payload) {
     sourceUrl: used,
     settings
   });
+
+  // 把「实际用的是哪一档」带回去：调用方据此在提示里说清是原图还是降级。
+  // 不这么做的话，4 KB 的缩略图和 178 KB 的原图会给出**一模一样**的「已保存」，
+  // 使用者只能靠事后翻 NAS 才发现某张糊了。
+  if (saved && saved.ok) {
+    const m = String(used || '').match(/\/(originals|\d+x\d*)\//i);
+    saved.usedUrl = used;
+    saved.sizeTag = m ? m[1] : '';
+    saved.downgraded = used !== payload.url;
+  }
+  return saved;
 }
 
 /* ================= 剪贴板（offscreen） ================= */
@@ -1054,11 +1071,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     case 'single:save':
       done(
-        singleSave(sender.tab, msg).then((r) => {
-          // 失败留痕：Alt+右键 与右键菜单共用这一条，记一次就够
-          if (!r || !r.ok) recordLastError('single:save', (r && (r.error || r.message)) || '未知错误', msg && msg.url);
-          return r;
-        })
+        singleSave(sender.tab, msg)
+          .then((r) => {
+            // 失败留痕：Alt+右键 与右键菜单共用这一条，记一次就够
+            if (!r || !r.ok) recordLastError('single:save', (r && (r.error || r.message)) || '未知错误', msg && msg.url);
+            return r;
+          })
+          .catch((e) => {
+            // 必须在这里接住，不能只靠 done() 的 catch —— 那一层只负责回消息，
+            // 不会写 `collector.lastError`，于是「抛了异常」在存储里查不到任何痕迹，
+            // 只剩用户口述的「报错了」。异常本身也要变成可读文案。
+            const m = '内部异常：' + String((e && e.message) || e);
+            recordLastError('single:save', m, msg && msg.url);
+            return { ok: false, error: m };
+          })
       );
       return true;
 

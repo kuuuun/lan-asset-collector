@@ -50,6 +50,8 @@ function fmtSize(n) {
 }
 
 let lastStats = null;
+/** 保存目标是否就绪：null = 还不知道（首次刷新前）。决定点状态条是「测连接」还是「去设置页」 */
+let targetReady = null;
 
 function setHint(text, kind) {
   const el = $('#hint');
@@ -82,6 +84,9 @@ async function loadStatus() {
     if (verEl) verEl.textContent = 'v' + st.version;
     lastStats = st.stats;
     const t = st.target || {};
+    targetReady = !!t.ready;
+    const pillNow = $('#status');
+    if (pillNow) pillNow.title = t.ready ? '点击测试连接' : '点击去设置页填写保存位置';
     if (t.ready) {
       pill.className = 'status ready';
       statusText.textContent = t.label || '已就绪';
@@ -122,12 +127,26 @@ document.querySelectorAll('[data-link]').forEach((btn) => {
 
     if (kind === 'stats') {
       const st = lastStats || (await send({ type: 'status' })).stats || {};
+      const hhmmss = (() => {
+        const t = Number(st.lastAt) || 0;
+        if (!t) return '';
+        const d = new Date(t);
+        const p = (n) => String(n).padStart(2, '0');
+        return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+      })();
+      const tail = hhmmss ? ` · 上次成功 ${hhmmss}` : '';
       if (!st.count) setHint('还没有采集记录');
       else {
         const extra = [];
         if (st.skipped) extra.push('重复跳过 ' + st.skipped);
         if (st.failed) extra.push('失败 ' + st.failed);
-        setHint(`累计 ${st.count} 张 · ${fmtSize(st.bytes)}${extra.length ? '（' + extra.join('，') + '）' : ''}`, 'ok');
+        // 「上次成功」不只是统计：它是判断「后台到底有没有收到请求」的唯一直接证据。
+        // 刚点过保存、这个时间却纹丝不动 → 请求根本没发出去（页面脚本已失效），
+        // 这时去追「保存为什么失败」是白费力气，按 F5 才是对的。
+        setHint(
+          `累计 ${st.count} 张 · ${fmtSize(st.bytes)}${extra.length ? '（' + extra.join('，') + '）' : ''}${tail}` +
+            ' —— 刚点过保存却没变化，就按 F5 刷新页面'
+        );
       }
       return;
     }
@@ -242,15 +261,38 @@ $('#menuFix') &&
  * 那个站点上原生右键这条路是死的（代码侧绕不过去）。
  * 所以给它一个不依赖右键的入口：当前页是 Pinterest 时，面板里直接出现这个按钮。
  */
-const PIN_HOST = /^https?:\/\/([^/]*\.)?pinterest\.[a-z.]+(\/|$)/i;
+/*
+ * 域名判定统一走 lib/util.js 的 CC.isPinterestUrl()（末尾锚点）。
+ * 原来这里有一份本地正则 `pinterest\.[a-z.]+`，它会把 `pinterest.com.evil.com` 也算成
+ * Pinterest —— 同一个判断留两份实现，迟早分叉。
+ */
 
 async function setupPinEntry() {
   const btn = $('#pinGrab');
-  if (!btn) return;
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     const url = (tabs && tabs[0] && tabs[0].url) || '';
-    if (PIN_HOST.test(url)) btn.hidden = false;
+    // 域名判定统一走 lib/util.js —— 面板里原来那份本地正则把 `pinterest.com.evil.com`
+    // 也算成 Pinterest（漏了末尾锚点），同一个判断不该有两份实现。
+    const isPin = CC.isPinterestUrl(url);
+    if (btn && isPin) btn.hidden = false;
+    if (!isPin) return;
+
+    // 「点了保存没反应」最先要排除的是「开关到底开没开」——从存储里读实际值，
+    // 不猜设置页的界面状态（改完没保存、或改了另一个浏览器配置，都会在这里露出来）。
+    const got = await chrome.storage.local.get(CC.SETTINGS_KEY);
+    const s = (got && got[CC.SETTINGS_KEY]) || {};
+    const hint = $('#hint');
+    if (!hint) return;
+    if (s.pinSaveMirror) {
+      hint.textContent = s.pinMirrorDebug
+        ? 'Pinterest 保存镜像：已开 · 诊断模式也在开（每次点击都会报判定结果）'
+        : 'Pinterest 保存镜像：已开（点「保存」时顺手存一份原图）';
+      hint.className = 'hint ok';
+    } else {
+      hint.textContent = 'Pinterest 保存镜像：未开 —— 设置 → 采集行为 → 勾上「我点保存时也存一份」';
+      hint.className = 'hint';
+    }
   } catch (_) {}
 }
 
@@ -263,7 +305,20 @@ $('#pinGrab') &&
 
 /* ---------------- 状态栏点击 = 测试连接 ---------------- */
 
+/**
+ * 未就绪时（地址/账号没填、目录没授权）点状态条 = 直接去设置页。
+ * 为什么：这时点「测试连接」只会回一句「账号未填写」，而真正该做的是去填账号。
+ * 配置被重置（移除扩展、换安装路径、浏览器清数据都会）时，状态条是使用者
+ * 唯一能立刻看到「为什么一根文件都没存下来」的地方，别让它只是干瞪眼。
+ */
 $('#status') && $('#status').addEventListener('click', async () => {
+  if (targetReady === false) {
+    setHint('保存目标未就绪，正在打开设置页…', 'err');
+    try {
+      await chrome.runtime.openOptionsPage();
+    } catch (_) {}
+    return;
+  }
   setHint('正在测试连接…');
   const r = await send({ type: 'test' });
   if (r && r.ok) {
@@ -293,6 +348,37 @@ document.addEventListener('keydown', (e) => {
  * 后台与内容脚本都往 `collector.lastError` 写一份，这里把它显示出来；
  * 超过一天的不显示 —— 陈年旧账比没有更误导。
  */
+/**
+ * 本页里跑的脚本，是不是扩展这一版。
+ *
+ * 为什么值得单独做一条：在 quark://extensions 点 ↻ 之后，**已打开的标签页不会自动换脚本**，
+ * 里面那份的 `chrome.runtime` 已经断开。表现是点保存/Alt+右键时收到
+ * 「保存失败：<浏览器英文>」，而存储里连一条失败记录都没有（因为它根本没发出去）。
+ * 这个不一致只能靠版本比对发现 —— 消息通道还在时才有得比。
+ */
+async function checkPageScript() {
+  const el = $('#staleWarn');
+  if (!el) return;
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs && tabs[0];
+    if (!tab || tab.id == null) return;
+    let ping = null;
+    try {
+      ping = await chrome.tabs.sendMessage(tab.id, { type: 'cc:ping' });
+    } catch (_) {
+      return; // 页面里没有我们的脚本（普通站点），没什么可比的
+    }
+    if (!ping || !ping.ok || !ping.version) return;
+    const cur = chrome.runtime.getManifest().version;
+    if (String(ping.version) === String(cur)) return;
+    el.innerHTML =
+      '本页脚本还是 <b>v' + String(ping.version) + '</b>，扩展已是 <b>v' + cur + '</b>' +
+      ' —— 在这个页面按 <b>F5</b> 刷新，采集才会用上新代码。';
+    el.hidden = false;
+  } catch (_) {}
+}
+
 async function showLastError() {
   const el = $('#lastErr');
   if (!el) return;
@@ -318,4 +404,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Pinterest 上右键这条路走不通，改用面板按钮
   setupPinEntry();
   showLastError();
+  // 刷新扩展后没 F5 的标签页，在这个面板里直接点出来
+  checkPageScript();
 });
