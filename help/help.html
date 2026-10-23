@@ -3,28 +3,35 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>素材采集器 · 使用说明</title>
+<title>觅图采集器 · 使用说明</title>
 <style>
+  /* 配色与觅图 Mito 主系统（mito/web/index.html）保持同一套 token */
+  :root {
+    --bg: #101014; --panel: #1a1a20; --panel-2: #202028; --border: #2a2a33;
+    --text: #e8e8ec; --muted: #8a8a95; --accent: #4f8cff;
+    --accent-soft: rgba(79,140,255,.12); --ok: #3ddc97; --warn: #f0c040;
+  }
   * { box-sizing: border-box; }
   body {
-    margin: 0; background: #f5f7fa; color: #1f2329;
-    font: 14px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   }
   .page { max-width: 820px; margin: 0 auto; padding: 36px 24px 90px; }
   header { display: flex; align-items: center; gap: 16px; margin-bottom: 26px; }
-  header img { width: 54px; height: 54px; border-radius: 13px; }
-  h1 { margin: 0; font-size: 22px; font-weight: 600; }
-  header p { margin: 2px 0 0; color: #6b7885; font-size: 13px; }
+  header img { width: 54px; height: 54px; flex: 0 0 auto; }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  h1 small { font-size: 13px; font-weight: 400; color: var(--muted); letter-spacing: .5px; }
+  header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
   .card {
-    background: #fff; border: 1px solid #e6eaf0; border-radius: 14px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
     padding: 22px 24px; margin-bottom: 16px;
   }
   h2 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
-  h3 { margin: 20px 0 8px; font-size: 13.5px; font-weight: 600; color: #334155; }
-  h4 { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: #475569; }
+  h3 { margin: 20px 0 8px; font-size: 13.5px; font-weight: 600; color: #c9c9d3; }
+  h4 { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: #b8b8c2; }
   h2 .n {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 22px; height: 22px; border-radius: 6px; background: #3b82f6; color: #fff;
+    width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: #fff;
     font-size: 12px; margin-right: 9px; vertical-align: 2px;
   }
   p { margin: 8px 0; }
@@ -34,41 +41,41 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12.5px;
   }
-  code { background: #f2f5f9; border: 1px solid #e8edf3; border-radius: 5px; padding: 1.5px 6px; color: #334155; }
+  code { background: #191920; border: 1px solid var(--border); border-radius: 5px; padding: 1.5px 6px; color: #b8b8c2; }
   pre {
-    background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 14px 16px;
+    background: #0b0b0e; color: #e2e8f0; border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
     overflow-x: auto; line-height: 1.65; margin: 10px 0;
   }
   pre code { background: none; border: 0; color: inherit; padding: 0; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eef2f7; }
-  th { color: #6b7885; font-weight: 500; font-size: 12px; background: #fafbfc; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; background: var(--bg); }
   kbd {
-    font-family: ui-monospace, monospace; font-size: 11.5px; background: #f4f7fa;
-    border: 1px solid #e6ebf1; border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; color: #475569;
+    font-family: ui-monospace, monospace; font-size: 11.5px; background: var(--bg);
+    border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; color: #b8b8c2;
   }
   .note {
-    background: #f5f9ff; border: 1px solid #d8e6ff; border-left: 3px solid #3b82f6;
+    background: var(--accent-soft); border: 1px solid rgba(79,140,255,.3); border-left: 3px solid var(--accent);
     border-radius: 9px; padding: 11px 15px; margin: 12px 0; font-size: 13px;
   }
   .warn {
-    background: #fffbf3; border: 1px solid #f5e3c0; border-left: 3px solid #f59e0b;
+    background: rgba(240,192,64,.1); border: 1px solid rgba(240,192,64,.35); border-left: 3px solid var(--warn);
     border-radius: 9px; padding: 11px 15px; margin: 12px 0; font-size: 13px;
   }
   .tag {
     display: inline-block; font-size: 11.5px; padding: 1px 8px; border-radius: 999px;
-    background: #eef4ff; color: #2563eb; margin-left: 6px; vertical-align: 1px;
+    background: var(--accent-soft); color: #8fb6ff; margin-left: 6px; vertical-align: 1px;
   }
-  .tag.gray { background: #f1f5f9; color: #64748b; }
+  .tag.gray { background: #232329; color: var(--muted); }
 </style>
 </head>
 <body>
 <div class="page">
 
   <header>
-    <img src="../assets/icons/128.png" alt="">
+    <img src="../assets/brand/01-viewfinder-rev.svg" alt="觅图">
     <div>
-      <h1>素材采集器 · LAN Collector 使用说明</h1>
+      <h1>觅图采集器 <small>Mito Collector</small></h1>
       <p>截图与网页图片采集，直接写入局域网共享文件夹</p>
     </div>
   </header>
@@ -77,7 +84,7 @@
     <h2>装好了，两步开始用</h2>
     <ol>
       <li>打开设置页 → 保存位置选「<strong>WebDAV 直传</strong>」，填上 NAS 账号密码，点「测试连接」看到绿灯（第 1 节）；</li>
-      <li>在任意网页的<strong>图片上点右键</strong> →「将图片保存至 LAN Collector」，这张图就存好了。</li>
+      <li>在任意网页的<strong>图片上点右键</strong> →「将图片保存至觅图」，这张图就存好了。</li>
     </ol>
     <div class="note">WebDAV <strong>不需要部署任何东西</strong> —— NAS 自带的 WebDAV 服务就是接收端。若环境里没有 WebDAV，也可以改用「浏览器目录授权」。</div>
   </div>
@@ -165,7 +172,7 @@ NAS 密码   只存在本机浏览器里</code></pre>
     <h2><span class="n">3</span>五种采集方式</h2>
     <table>
       <tr><th>功能</th><th>说明</th><th>快捷键</th></tr>
-      <tr><td>一键剪藏单图</td><td>在<strong>图片上右键</strong> →「将图片保存至 LAN Collector」，点一下即存，形态与 Billfish 采集扩展一致</td><td>—</td></tr>
+      <tr><td>一键剪藏单图</td><td>在<strong>图片上右键</strong> →「将图片保存至觅图」，点一下即存，形态与 Billfish 采集扩展一致</td><td>—</td></tr>
       <tr><td>Alt + 右键采集</td><td>在图片上按住 <kbd>Alt</kbd> 右键，直接采集这张图，不弹浏览器菜单</td><td><kbd>Alt</kbd>+右键</td></tr>
       <tr><td>自定义区域截图</td><td>拖拽框选，松手即存</td><td><kbd>Ctrl</kbd>+<kbd>2</kbd></td></tr>
       <tr><td>可视区域截图</td><td>当前屏幕可见范围</td><td><kbd>Ctrl</kbd>+<kbd>3</kbd></td></tr>
@@ -176,17 +183,21 @@ NAS 密码   只存在本机浏览器里</code></pre>
       快捷键说明：<kbd>Ctrl</kbd>+数字 会被浏览器用于切换标签页，所以在<strong>面板打开时</strong>才在本插件内生效。
       想在任何页面直接触发，去浏览器「扩展 → 键盘快捷键」（<code>chrome://extensions/shortcuts</code>）改成 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>1..4</kbd>。
     </div>
-    <p>右键菜单里<strong>只有「将图片保存至 LAN Collector」这一项</strong>，只在图片上出现 —— 菜单项一多，Chromium 会把它们
-      自动折叠成「素材采集器 ›」二级菜单，一键剪藏就变成两次点击了。其余四个入口在扩展面板与快捷键里。</p>
+    <p>右键菜单里<strong>只有「将图片保存至觅图」这一项</strong>，只在图片上出现 —— 菜单项一多，Chromium 会把它们
+      自动折叠成「觅图采集器 ›」二级菜单，一键剪藏就变成两次点击了。其余四个入口在扩展面板与快捷键里。</p>
     <div class="note">v1.5.5 起<strong>已移除「鼠标悬停时浮现采集按钮」</strong>：它在每个含图片的页面上都会常驻一组
       全局监听器与一个浮动层，收益不大却一直跟着你浏览。单图采集请用上面两条 —— 图片上右键一键剪藏，或
       <kbd>Alt</kbd>+右键。</div>
 
     <div class="note">v1.7.0 起还有一个<strong>反向</strong>入口，需要先在<em>设置 → 采集行为</em>里打开
       「Pinterest：我点『保存』时，顺手也存一份到本地」。打开后，你在 <strong>pinterest.com 点自己的「保存」</strong>时，
-      扩展会把同一张图（自动换算成 <code>originals</code> 原图）存一份到素材库 —— <strong>不打断、不改写</strong>
+      扩展会把同一张图（自动换算成 <code>originals</code> 原图）存一份到本地 —— <strong>不打断、不改写</strong>
       Pinterest 的保存，也不替你发任何内容。只在 Pinterest 生效，默认关闭。</div>
-    <div class="note">菜单项前面那个图标就是扩展自己的图标（照片卡 + 下落箭头）。浏览器的右键菜单接口
+    <div class="note">同样的<strong>反向</strong>入口也支持<strong>花瓣网</strong>：在<em>设置 → 采集行为</em>里打开
+      「花瓣网：我点『采集』时，顺手也存一份到本地」。打开后，你在 <strong>huaban.com 点自己的「采集」</strong>时，
+      扩展会把同一张图（自动去掉 CDN 的 <code>_fw</code> 尺寸段、换算成原图）存一份到本地 —— <strong>不打断、不改写</strong>
+      花瓣网的采集，也不替你发任何内容。只在花瓣网生效，默认关闭。</div>
+    <div class="note">菜单项前面那个图标就是扩展自己的图标（觅图取景框标记）。浏览器的右键菜单接口
       <strong>不支持给单个菜单项单独配图</strong>，显示的一律取自扩展图标本身 —— 所以「换菜单图标」＝ 换
       <code>assets/icons/</code>，改完刷新扩展即可。</div>
   </div>
@@ -283,8 +294,8 @@ NAS 密码   只存在本机浏览器里</code></pre>
       <li>报「无法连接」：确认端口（群晖 5005 / 5006）与网络可通</li>
     </ul>
     <h3>右键菜单里只有一项，找不到区域截图</h3>
-    <p>这是刻意的。右键菜单只保留「将图片保存至 LAN Collector」这一个一键动作（与 Billfish 采集扩展一致）——
-      同一扩展注册多项时，Chromium 会把它们折叠成一个「素材采集器 ›」二级菜单，一键剪藏就变成了两次点击。
+    <p>这是刻意的。右键菜单只保留「将图片保存至觅图」这一个一键动作（与 Billfish 采集扩展一致）——
+      同一扩展注册多项时，Chromium 会把它们折叠成一个「觅图采集器 ›」二级菜单，一键剪藏就变成了两次点击。
       区域截图 / 可视区截图 / 整页截图 / 批量采集都在扩展面板里，也都有快捷键。</p>
 
     <h3>改了菜单名字 / 图标，右键里还是旧的</h3>
@@ -302,7 +313,7 @@ NAS 密码   只存在本机浏览器里</code></pre>
         （因为请求根本没发出去）。v1.7.4 起扩展面板会直接发现这件事：顶部出现黄色警告条写明本页脚本是旧版，
         点击面板里的「采集统计」也会显示「上次成功 时间」，刚点过却没变就是同一个原因</li>
       <li>确认选中的就是本目录，而不是早先解压在别处的旧副本</li>
-      <li>自检：把鼠标悬停在工具栏图标上，悬浮提示里带版本号（形如「素材采集器 1.7.4 · …」）——
+      <li>自检：把鼠标悬停在工具栏图标上，悬浮提示里带版本号（形如「觅图采集器 1.7.4 · …」）——
         版本号对得上，说明浏览器跑的就是这份代码</li>
     </ul>
 
@@ -366,7 +377,7 @@ NAS 密码   只存在本机浏览器里</code></pre>
     <p>WebDAV 模式下，NAS 账号密码只存在本机扩展的存储里，仅在向该 NAS 发请求时用于 Basic 鉴权。写入路径由模板生成且经过清洗，<code>..</code> 与路径分隔符会被剥离。建议单独建一个只对该共享文件夹有权限的 NAS 账号。</p>
     <p>扩展不开任何本地监听端口，也不接受来自网页的连接，因此没有可被外部写入的入口。写入路径由模板生成且经过清洗，<code>..</code> 与路径分隔符会被剥离。</p>
     <p>反推提示词只会把图片发给你自己填的 ComfyUI 地址（默认 <code>127.0.0.1</code>），不经过任何云端服务；生成的提示词只保存在当前页面里，关掉就没了。</p>
-    <p style="color:#6b7885;font-size:12.5px">版本 1.7.4 · 两条落盘通道：WebDAV 直传 / 目录授权 · 反推提示词走本地 ComfyUI · Windows 与 macOS 同一份代码</p>
+    <p style="color:#8a8a95;font-size:12.5px">版本 1.7.5 · 两条落盘通道：WebDAV 直传 / 目录授权 · 反推提示词走本地 ComfyUI · Windows 与 macOS 同一份代码</p>
   </div>
 
 </div>

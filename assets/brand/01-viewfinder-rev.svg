@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Mito viewfinder mark (reversed)">
+  <g fill="none" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 47V21h26"/>
+    <path d="M73 21h26v26"/>
+    <path d="M99 73v26H73"/>
+    <path d="M47 99H21V73"/>
+  </g>
+  <circle cx="60" cy="60" r="20" fill="none" stroke="#FFFFFF" stroke-width="6"/>
+  <circle cx="60" cy="60" r="8" fill="#FFFFFF"/>
+</svg>

@@ -1,4 +1,4 @@
-/* 素材采集器 · 弹出面板 */
+/* 觅图采集器 · 弹出面板 */
 
 const $ = (s) => document.querySelector(s);
 
@@ -34,11 +34,11 @@ function fire(p) {
  * 不冒到扩展管理页的错误列表里。要排查就打开弹窗的开发者控制台看这条 warn。
  */
 window.addEventListener('unhandledrejection', (e) => {
-  try { console.warn('[素材采集器] 未处理的异步错误：', e.reason); } catch (_) {}
+  try { console.warn('[觅图采集器] 未处理的异步错误：', e.reason); } catch (_) {}
   e.preventDefault();
 });
 window.addEventListener('error', (e) => {
-  try { console.warn('[素材采集器] 未捕获错误：', e.message); } catch (_) {}
+  try { console.warn('[觅图采集器] 未捕获错误：', e.message); } catch (_) {}
 });
 
 function fmtSize(n) {
@@ -172,7 +172,7 @@ document.querySelectorAll('[data-link]').forEach((btn) => {
     }
 
     if (kind === 'about') {
-      setHint('截图与网页图片采集器 · 直接写入局域网共享目录，不依赖第三方素材库软件');
+      setHint('觅图 Mito 的浏览器采集端 · 直接写入局域网共享目录，不依赖第三方素材库软件');
       return;
     }
   });
@@ -247,7 +247,7 @@ $('#menuFix') &&
   $('#menuFix').addEventListener('click', async () => {
     const m = await refreshMenuState(true);
     if (m && m.ok) {
-      setHint('已重新注册：在图片上点右键就能看到「' + (m.title || '将图片保存至 LAN Collector') + '」', 'ok');
+      setHint('已重新注册：在图片上点右键就能看到「' + (m.title || '将图片保存至觅图') + '」', 'ok');
     } else if (m) {
       setHint('注册失败：' + (m.error || '未知原因'), 'err');
     }
@@ -300,6 +300,39 @@ $('#pinGrab') &&
   $('#pinGrab').addEventListener('click', () => {
     // 与四个主入口一致：后台继续执行，面板立即关闭（结果由系统通知回报）
     send({ type: 'pin:collect' });
+    window.close();
+  });
+
+async function setupHuaBanEntry() {
+  const btn = $('#huaBanGrab');
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const url = (tabs && tabs[0] && tabs[0].url) || '';
+    // 域名判定统一走 lib/util.js —— 与 setupPinEntry 同一纪律，不在这里另写一份正则
+    const isHb = CC.isHuabanUrl(url);
+    if (btn && isHb) btn.hidden = false;
+    if (!isHb) return;
+
+    // 「点了采集没反应」最先要排除的是「开关到底开没开」——从存储里读实际值
+    const got = await chrome.storage.local.get(CC.SETTINGS_KEY);
+    const s = (got && got[CC.SETTINGS_KEY]) || {};
+    const hint = $('#hint');
+    if (!hint) return;
+    if (s.huaBanSaveMirror) {
+      hint.textContent = s.huaBanMirrorDebug
+        ? '花瓣网采集镜像：已开 · 诊断模式也在开（每次点击都会报判定结果）'
+        : '花瓣网采集镜像：已开（点「采集」时顺手存一份原图）';
+      hint.className = 'hint ok';
+    } else {
+      hint.textContent = '花瓣网采集镜像：未开 —— 设置 → 采集行为 → 勾上「我点采集时也存一份」';
+      hint.className = 'hint';
+    }
+  } catch (_) {}
+}
+
+$('#huaBanGrab') &&
+  $('#huaBanGrab').addEventListener('click', () => {
+    send({ type: 'huaban:collect' });
     window.close();
   });
 
@@ -403,6 +436,8 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshMenuState(false);
   // Pinterest 上右键这条路走不通，改用面板按钮
   setupPinEntry();
+  // 花瓣网同理：面板按钮入口
+  setupHuaBanEntry();
   showLastError();
   // 刷新扩展后没 F5 的标签页，在这个面板里直接点出来
   checkPageScript();

@@ -2,16 +2,25 @@
 # -*- coding: utf-8 -*-
 """生成扩展图标（纯标准库，无 Pillow 依赖）。
 
-图形含义：一张照片卡 + 自上而下的箭头 = 「把这张图片收进库里」。
-底色用靛蓝→青的斜向渐变，和设置页 / 弹窗的主色同族。
+图形直接采用觅图 Mito 的品牌标记「取景框」（viewfinder）：
+四个圆角 L 形角标 + 一圈对焦环 + 中心实心点。
+与觅图主站 web/brand/01-viewfinder.svg 同一套几何，
+所以插件图标与觅图系统放在一起时是同一套视觉语言。
 
-小尺寸（16/32）会省略卡片内部的山与太阳：16px 下那点细节只会糊成噪点，
-留一张干净的白卡片反而更像「图片」。这是图标设计的常规做法 —— 按尺寸给细节。
+实现说明：原 SVG 用 stroke 描边（圆头圆角），纯 Python 逐像素不好直接描边。
+这里把圆头线段拆成「胶囊形状」（线段 + 两端半径为半线宽的圆），
+再把 L 形两条胶囊的并集算出来 —— 与 SVG 的 stroke-linecap="round" +
+stroke-linejoin="round" 视觉等价。
+
+配色沿用觅图主站的深色底 + 取景框反白：
+  底色 #14171C（觅图 brand ink），标记 #FFFFFF
+16px 下角标与对焦环会粘连，所以小尺寸省略对焦环、只留角标与中心点。
 
 用法：
     python tools/make_icons.py
 """
 
+import math
 import os
 import struct
 import zlib
@@ -19,9 +28,22 @@ import zlib
 SIZES = [16, 32, 48, 128]
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "icons")
 
-# 渐变两端：靛蓝 → 天青
-C1 = (99, 102, 241)
-C2 = (14, 165, 233)
+# 觅图品牌色：brand ink（底）+ 反白（标记）
+INK = (0x14, 0x17, 0x1C)
+MARK = (0xFF, 0xFF, 0xFF)
+
+RING_R = 20           # 对焦环半径
+PAD = 21              # 角标起点距画布边
+
+# 每个尺寸一套笔画参数（120 单位坐标系）。
+# 小尺寸下按原比例画会糊成一团 —— 9/120 的线宽在 16px 上只有 1.2px，
+# 抗锯齿一糊就看不出是取景框。所以按尺寸加粗笔画、缩短角标。
+PRESETS = {
+    16: {"sw": 14, "len": 25, "dot": 11, "ring_sw": 0},
+    32: {"sw": 11, "len": 26, "dot": 9, "ring_sw": 8},
+    48: {"sw": 9, "len": 26, "dot": 8, "ring_sw": 6},
+    128: {"sw": 9, "len": 26, "dot": 8, "ring_sw": 6},
+}
 
 
 # ---------------- PNG ----------------
@@ -59,49 +81,61 @@ def in_round_rect(x, y, x0, y0, x1, y1, r):
     return dx * dx + dy * dy <= r * r + 1e-9
 
 
-def in_arrow(x, y, small=False):
-    """自上而下的箭头：箭杆 + 三角头。
+def dist_to_segment(px, py, x1, y1, x2, y2):
+    """点到线段的最短距离"""
+    dx = x2 - x1
+    dy = y2 - y1
+    L2 = dx * dx + dy * dy
+    if L2 <= 1e-12:
+        return math.hypot(px - x1, py - y1)
+    t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / L2))
+    return math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
 
-    small=True 是给 16/32 用的加粗版 —— 小尺寸下细杆细头会被抗锯齿糊掉，
-    必须把笔画加宽才看得出来。
+
+def in_capsule(x, y, x1, y1, x2, y2, r):
+    """圆头线段（胶囊）"""
+    return dist_to_segment(x, y, x1, y1, x2, y2) <= r
+
+
+def in_ring(x, y, cx, cy, radius, half_sw):
+    """圆环（描边圆）"""
+    d = math.hypot(x - cx, y - cy)
+    return abs(d - radius) <= half_sw
+
+
+def in_dot(x, y, cx, cy, radius):
+    return math.hypot(x - cx, y - cy) <= radius
+
+
+def corner_brackets(x, y, unit, half_sw, length):
+    """四个取景角标。
+
+    每个角由两条胶囊组成（横臂 + 竖臂），两者在拐角处自然形成圆角接缝。
     """
-    if small:
-        shaft_half, shaft_y, head_y, head_half = 0.09, (0.085, 0.22), (0.20, 0.42), 0.26
-    else:
-        shaft_half, shaft_y, head_y, head_half = 0.063, (0.10, 0.25), (0.22, 0.38), 0.205
-    if abs(x - 0.5) <= shaft_half and shaft_y[0] <= y <= shaft_y[1]:
+    p = PAD * unit
+    L = length * unit
+    r = half_sw
+    # 四个角：(拐点方向)  —— 用统一的 12 边界表达
+    # 左上角：竖臂 (p, p+L)->(p, p)，横臂 (p, p)->(p+L, p)
+    if in_capsule(x, y, p, p + L, p, p, r):
         return True
-    if head_y[0] <= y <= head_y[1]:
-        t = (y - head_y[0]) / (head_y[1] - head_y[0])
-        if abs(x - 0.5) <= head_half * (1.0 - t):
-            return True
-    return False
-
-
-def in_card(x, y, small=False):
-    """照片卡（白色主体）"""
-    if small:
-        return in_round_rect(x, y, 0.115, 0.50, 0.885, 0.915, 0.085)
-    return in_round_rect(x, y, 0.13, 0.46, 0.87, 0.885, 0.09)
-
-
-def in_card_detail(x, y):
-    """卡片内部被镂空的部分（山 + 太阳），镂空后透出底色"""
-    # 太阳
-    dx = x - 0.305
-    dy = y - 0.585
-    if dx * dx + dy * dy <= 0.05 * 0.05:
+    if in_capsule(x, y, p, p, p + L, p, r):
         return True
-    # 近处的山（上尖下宽）
-    if 0.575 <= y <= 0.80:
-        t = (y - 0.575) / 0.225
-        if abs(x - 0.615) <= 0.235 * t:
-            return True
-    # 远处的山
-    if 0.635 <= y <= 0.80:
-        t = (y - 0.635) / 0.165
-        if abs(x - 0.345) <= 0.135 * t:
-            return True
+    # 右上角：横臂 (p+L, p)->(1-p, p)，竖臂 (1-p, p)->(1-p, p+L)
+    if in_capsule(x, y, p + L, p, 1 - p, p, r):
+        return True
+    if in_capsule(x, y, 1 - p, p, 1 - p, p + L, r):
+        return True
+    # 右下角：竖臂 (1-p, 1-p-L)->(1-p, 1-p)，横臂 (1-p, 1-p)->(1-p-L, 1-p)
+    if in_capsule(x, y, 1 - p, 1 - p - L, 1 - p, 1 - p, r):
+        return True
+    if in_capsule(x, y, 1 - p, 1 - p, 1 - p - L, 1 - p, r):
+        return True
+    # 左下角：横臂 (1-p-L, 1-p)->(p, 1-p)，竖臂 (p, 1-p)->(p, 1-p-L)
+    if in_capsule(x, y, 1 - p - L, 1 - p, p, 1 - p, r):
+        return True
+    if in_capsule(x, y, p, 1 - p, p, 1 - p - L, r):
+        return True
     return False
 
 
@@ -110,8 +144,18 @@ def render(size, ss):
     w = h = size
     buf = bytearray(w * h * 4)
     step = 1.0 / (size * ss)
-    r = 0.225
-    small = size < 48  # 小尺寸：加粗笔画、省掉卡片内部细节
+
+    unit = 1.0 / 120.0     # 原 SVG 是 120x120
+    p = PRESETS[size]
+    half_sw = (p["sw"] * unit) / 2.0
+    ring_r = RING_R * unit
+    ring_half = (p["ring_sw"] * unit) / 2.0
+    dot_r = p["dot"] * unit
+
+    # 小尺寸省略对焦环：16px 下它会与角标粘连成一团糊
+    with_ring = p["ring_sw"] > 0
+
+    r = 0.225             # 圆角底板半径
 
     for py in range(h):
         for px in range(w):
@@ -123,18 +167,14 @@ def render(size, ss):
                     y = (py * ss + sy + 0.5) * step
                     if not in_round_rect(x, y, 0.0, 0.0, 1.0, 1.0, r):
                         continue
-                    t = max(0.0, min(1.0, x * 0.55 + y * 0.45))
-                    base = (
-                        C1[0] + (C2[0] - C1[0]) * t,
-                        C1[1] + (C2[1] - C1[1]) * t,
-                        C1[2] + (C2[2] - C1[2]) * t,
-                    )
-                    if in_arrow(x, y, small):
-                        col = (255.0, 255.0, 255.0)
-                    elif in_card(x, y, small):
-                        col = base if (not small and in_card_detail(x, y)) else (255.0, 255.0, 255.0)
+                    if corner_brackets(x, y, unit, half_sw, p["len"]):
+                        col = MARK
+                    elif with_ring and in_ring(x, y, 0.5, 0.5, ring_r, ring_half):
+                        col = MARK
+                    elif in_dot(x, y, 0.5, 0.5, dot_r):
+                        col = MARK
                     else:
-                        col = base
+                        col = INK
                     acc[0] += col[0]
                     acc[1] += col[1]
                     acc[2] += col[2]

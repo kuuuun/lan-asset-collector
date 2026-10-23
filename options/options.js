@@ -1,4 +1,4 @@
-/* 素材采集器 · 设置页 */
+/* 觅图采集器 · 设置页 */
 
 const CC = self.CC;
 const $ = (s) => document.querySelector(s);
@@ -13,11 +13,11 @@ let saveTimer = null;
  * 来说那就是「插件坏了」。这里只把它降到控制台的 warn，功能不受影响。
  */
 window.addEventListener('unhandledrejection', (e) => {
-  try { console.warn('[素材采集器] 设置页未处理的异步错误：', e.reason); } catch (_) {}
+  try { console.warn('[觅图采集器] 设置页未处理的异步错误：', e.reason); } catch (_) {}
   e.preventDefault();
 });
 window.addEventListener('error', (e) => {
-  try { console.warn('[素材采集器] 设置页未捕获错误：', e.message); } catch (_) {}
+  try { console.warn('[觅图采集器] 设置页未捕获错误：', e.message); } catch (_) {}
 });
 
 /* ---------------- 工具 ---------------- */
@@ -114,6 +114,8 @@ function syncFormUI() {
   $('#toastInPage').checked = !!settings.toastInPage;
   $('#pinSaveMirror').checked = !!settings.pinSaveMirror;
   $('#pinMirrorDebug').checked = !!settings.pinMirrorDebug;
+  $('#huaBanSaveMirror').checked = !!settings.huaBanSaveMirror;
+  $('#huaBanMirrorDebug').checked = !!settings.huaBanMirrorDebug;
   $('#minSize').value = settings.minSize;
 
   const c = settings.comfy || {};
@@ -269,7 +271,7 @@ function bind() {
   });
 
   /* 行为 */
-  [['#altRightClick', 'altRightClick'], ['#skipDuplicate', 'skipDuplicate'], ['#toastInPage', 'toastInPage'], ['#pinSaveMirror', 'pinSaveMirror'], ['#pinMirrorDebug', 'pinMirrorDebug']].forEach(
+  [['#altRightClick', 'altRightClick'], ['#skipDuplicate', 'skipDuplicate'], ['#toastInPage', 'toastInPage'], ['#pinSaveMirror', 'pinSaveMirror'], ['#pinMirrorDebug', 'pinMirrorDebug'], ['#huaBanSaveMirror', 'huaBanSaveMirror'], ['#huaBanMirrorDebug', 'huaBanMirrorDebug']].forEach(
     ([sel, key]) => {
       $(sel).addEventListener('change', async () => {
         await save({ [key]: $(sel).checked }, true);

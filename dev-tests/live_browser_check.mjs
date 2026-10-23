@@ -451,12 +451,13 @@ try {
         // 只有在这里直接问一句才知道到底加载上没有。
         const shared = await c.send('Runtime.evaluate', {
           expression:
-            "JSON.stringify({ has: typeof CC !== 'undefined', pin: typeof CC === 'undefined' ? '' : CC.isPinterestUrl('https://www.pinterest.com/pin/1/'), fake: typeof CC === 'undefined' ? true : CC.isPinterestUrl('https://pinterest.com.evil.com/') })",
+            "JSON.stringify({ has: typeof CC !== 'undefined', pin: typeof CC === 'undefined' ? '' : CC.isPinterestUrl('https://www.pinterest.com/pin/1/'), fake: typeof CC === 'undefined' ? true : CC.isPinterestUrl('https://pinterest.com.evil.com/'), hb: typeof CC === 'undefined' ? '' : CC.isHuabanUrl('https://www.huaban.com/pin/1/'), hbFake: typeof CC === 'undefined' ? true : CC.isHuabanUrl('https://huaban.com.evil.com/') })",
           returnByValue: true,
         });
         let sh = {};
         try { sh = JSON.parse((shared.result && shared.result.value) || '{}'); } catch (_) {}
         check('弹窗里加载到了共用的域名判定（且仿冒域名不算）', sh.has === true && sh.pin === true && sh.fake === false, JSON.stringify(sh));
+        check('共用的域名判定也认花瓣主域（且仿冒不算）', sh.has === true && sh.hb === true && sh.hbFake === false, JSON.stringify(sh));
 
         // v1.5.7：弹窗里那行菜单状态必须自己变成「已就绪」。
         // 这条同时验证了诊断入口本身可用 —— 使用者打开面板就能直接看到右键菜单注册上没有，
@@ -489,6 +490,20 @@ try {
           JSON.stringify(pgi)
         );
 
+        // v1.7.5：花瓣网大图入口必须存在，且在「非花瓣页面」上保持隐藏（弹窗本身开在 chrome-extension:// 页面）
+        const hbg = await c.send('Runtime.evaluate', {
+          expression:
+            "JSON.stringify({ has: !!document.getElementById('huaBanGrab'), hidden: !!(document.getElementById('huaBanGrab') || {}).hidden })",
+          returnByValue: true,
+        });
+        let hbgi = {};
+        try { hbgi = JSON.parse((hbg.result && hbg.result.value) || '{}'); } catch (_) {}
+        check(
+          '弹窗有花瓣网大图入口，且非花瓣页面上保持隐藏',
+          hbgi.has === true && hbgi.hidden === true,
+          JSON.stringify(hbgi)
+        );
+
         // v1.6.0：复制原图 / 素材工作台两个新入口必须在面板上
         const nx = await c.send('Runtime.evaluate', {
           expression:
@@ -510,6 +525,7 @@ try {
           ['single:save', { type: 'single:save', url: 'data:image/png;base64,iVBORw0KGgo=' }],
           ['batch:save', { type: 'batch:save', items: [{ url: 'data:image/png;base64,iVBORw0KGgo=' }] }],
           ['pin:collect', { type: 'pin:collect' }],
+          ['huaban:collect', { type: 'huaban:collect' }],
           ['copy:image', { type: 'copy:image', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' }],
           ['copy:page', { type: 'copy:page' }],
           ['comfy:queue', { type: 'comfy:queue' }],
@@ -818,6 +834,62 @@ try {
               })
               .catch(() => {});
 
+            // ---------- v1.7.5 花瓣网采集镜像：绝不能在不该管的站点上抢「采集」 ----------
+            // 与上面 Pinterest 同纪律：页面里真有一个写着「采集」的按钮、点它，
+            // 在非 huaban 域名上必须什么都不发生 —— 否则等于全网劫持采集键。
+            await swCdp
+              .send('Runtime.evaluate', {
+                expression: 'self.CC.setSettings({ huaBanSaveMirror: true })',
+                awaitPromise: true,
+                returnByValue: true,
+              })
+              .catch(() => {});
+            await pc.send('Runtime.evaluate', {
+              expression: [
+                '(() => {',
+                '  window.__toast0 = document.querySelectorAll(".ccx-toast").length;',
+                '  const b = document.createElement("button");',
+                '  b.id = "fakeCollect";',
+                '  b.textContent = "采集";',
+                '  b.style.cssText = "position:fixed;left:20px;top:20px;width:90px;height:40px;z-index:99999";',
+                '  document.body.appendChild(b);',
+                '  const r = b.getBoundingClientRect();',
+                '  b.dispatchEvent(new MouseEvent("click", {',
+                '    bubbles: true, cancelable: true, button: 0,',
+                '    clientX: r.left + r.width / 2, clientY: r.top + r.height / 2',
+                '  }));',
+                '  return location.hostname;',
+                '})()',
+              ].join('\n'),
+              returnByValue: true,
+            });
+            await sleep(800);
+            const afterHb = await pc.send('Runtime.evaluate', {
+              expression:
+                'JSON.stringify({ host: location.hostname, toasts: [...document.querySelectorAll(".ccx-toast")].map((e) => e.textContent) })',
+              returnByValue: true,
+            });
+            const errHb = await swCdp.send('Runtime.evaluate', {
+              expression:
+                'chrome.storage.local.get("collector.lastError").then((r) => JSON.stringify((r && r["collector.lastError"]) || {}))',
+              awaitPromise: true,
+              returnByValue: true,
+            });
+            const ahj = JSON.parse((afterHb.result && afterHb.result.value) || '{}');
+            const ehj = String((errHb.result && errHb.result.value) || '{}');
+            check(
+              '非花瓣页面点「采集」不会触发镜像',
+              !/顺手/.test(JSON.stringify(ahj.toasts || [])) && !/"where":"hb:/.test(ehj),
+              `${JSON.stringify(ahj).slice(0, 100)} ${ehj.slice(0, 100)}`
+            );
+            await swCdp
+              .send('Runtime.evaluate', {
+                expression: 'self.CC.setSettings({ huaBanSaveMirror: false })',
+                awaitPromise: true,
+                returnByValue: true,
+              })
+              .catch(() => {});
+
             pc.close();
           } else {
             check('Alt + 右键回归探针拿到了页面连接', false, '缺少 webSocketDebuggerUrl');
@@ -1033,7 +1105,7 @@ try {
     // 从常量声明里取标题。注意别再去匹配 create(...) 里的字面量 ——
     // v1.5.7 起注册用的是 MENU_ID / MENU_TITLE 两个常量，匹配不到会取到空串，
     // 那样探针会把菜单标题真的清成空（虽然下一次注册会刷回来，但没必要的副作用）。
-    const titleInSrc = (menuSrc.match(/const MENU_TITLE = '([^']+)'/) || [])[1] || '将图片保存至 LAN Collector';
+    const titleInSrc = (menuSrc.match(/const MENU_TITLE = '([^']+)'/) || [])[1] || '将图片保存至觅图';
     const m = await swCdp.send('Runtime.evaluate', {
       expression: [
         '(async () => {',

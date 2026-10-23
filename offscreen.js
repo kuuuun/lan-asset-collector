@@ -1,5 +1,5 @@
 /*
- * 素材采集器 · offscreen 文档
+ * 觅图采集器 · offscreen 文档
  *
  * MV3 的 service worker 没有 DOM，所以这两件事必须在有 DOM 的上下文里做：
  *   1) navigator.clipboard.write —— 把图片写进系统剪贴板（能直接粘进 PS / Figma）

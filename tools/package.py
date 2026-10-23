@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-素材采集器 · 打包脚本
-=====================
+觅图采集器 · 打包脚本
+=========================
 
 把 lan-asset-collector/ 打成一个可直接分发的 zip，放在其**上一级目录**。
 
@@ -245,7 +245,7 @@ def main():
 
     version, problems = check(items)
     print("=" * 56)
-    print(f"  素材采集器 · 打包校验")
+    print(f"  觅图采集器 · 打包校验")
     print("=" * 56)
     print(f"  待打包文件：{len(items)} 个")
 

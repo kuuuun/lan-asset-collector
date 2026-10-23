@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>素材采集器 · 设置</title>
+<title>觅图采集器 · 设置</title>
 <link rel="stylesheet" href="options.css">
 </head>
 <body>
@@ -10,9 +10,9 @@
 
   <header class="page-head">
     <div class="brand">
-      <img src="../assets/icons/128.png" alt="">
+      <img src="../assets/brand/01-viewfinder-rev.svg" alt="觅图">
       <div>
-        <h1>素材采集器</h1>
+        <h1>觅图采集器 <small>Mito Collector</small></h1>
         <p>截图与网页图片采集 · 直接写入局域网共享目录</p>
       </div>
     </div>
@@ -180,6 +180,21 @@
     </p>
     <div class="checks">
       <label class="check"><input type="checkbox" id="pinMirrorDebug"><span>Pinterest 保存镜像：诊断模式（排查完记得关掉）</span></label>
+    </div>
+    <div class="checks">
+      <label class="check"><input type="checkbox" id="huaBanSaveMirror"><span>花瓣网：我点「采集」时，顺手也存一份到本地</span></label>
+    </div>
+    <p class="tip">
+      花瓣网那一项只在 <strong>huaban.com</strong> 生效：你在页面上点自己的「采集」时，
+      扩展同时把这张图（自动去掉 CDN 的 <code>_fw</code> 尺寸段、换算成原图）存一份到素材库。<strong>不会</strong>打断或改动
+      花瓣网的采集动作，也不会替你发任何内容。默认关闭。
+    </p>
+    <p class="tip">
+      点了采集却没反应？打开下面的<strong>诊断模式</strong>，再回花瓣网点一次 —— 页面右下角会直接告诉你
+      断在哪一步（开关没开 / 没认出采集按钮 / 认出了却找不到图），并把落点上的元素名和尺寸列出来。
+    </p>
+    <div class="checks">
+      <label class="check"><input type="checkbox" id="huaBanMirrorDebug"><span>花瓣网采集镜像：诊断模式（排查完记得关掉）</span></label>
     </div>
   </section>
 

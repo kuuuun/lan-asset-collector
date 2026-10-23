@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "素材采集器 · LAN Collector",
-  "version": "1.7.4",
-  "description": "在图片上右键一键剪藏，或区域截图 / 可视区截图 / 整页滚动截图 / 批量采集，直接保存到 NAS 或本机目录，不经过第三方素材库软件。",
+  "name": "觅图采集器 · Mito Collector",
+  "version": "1.7.5",
+  "description": "觅图 Mito 的浏览器采集端：在图片上右键一键剪藏，或区域截图 / 可视区截图 / 整页滚动截图 / 批量采集，直接保存到 NAS 或本机目录，不经过第三方素材库软件。",
   "minimum_chrome_version": "109",
   "permissions": [
     "tabs",
@@ -23,7 +23,7 @@
   },
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "素材采集器",
+    "default_title": "觅图采集器",
     "default_icon": {
       "16": "assets/icons/16.png",
       "32": "assets/icons/32.png",

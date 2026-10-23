@@ -1,16 +1,39 @@
+/* 觅图采集器 · 弹出面板
+ *
+ * 配色与觅图 Mito 主系统（mito/web/index.html）保持同一套 token：
+ *   --bg #101014 · --panel #1a1a20 · --border #2a2a33
+ *   --text #e8e8ec · --muted #8a8a95 · --accent #4f8cff
+ * 这样弹窗与觅图主站并排看，是同一个系统的两张脸。
+ */
+
 * { box-sizing: border-box; }
 
 /* [hidden] 必须能压住 .wide 的 display:flex —— 否则「采集本页大图」在非 Pinterest
    页面上仍会露出来 */
 [hidden] { display: none !important; }
 
+:root {
+  --bg: #101014;
+  --panel: #1a1a20;
+  --panel-2: #202028;
+  --border: #2a2a33;
+  --text: #e8e8ec;
+  --muted: #8a8a95;
+  --accent: #4f8cff;
+  --accent-d: #3b78e0;
+  --ok: #3ddc97;
+  --err: #ff6b6b;
+  --warn: #f0c040;
+}
+
 html, body {
   margin: 0;
   padding: 0;
   width: 424px;
-  background: #fff;
-  color: #1f2329;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Microsoft YaHei", sans-serif;
   font-size: 13px;
 }
 
@@ -28,27 +51,36 @@ html, body {
 
 .brand { display: flex; gap: 10px; }
 
+/* 品牌标记：觅图 Mito 的取景框，与主站 header 用的是同一个 SVG */
 .logo {
   width: 34px;
   height: 34px;
-  border-radius: 8px;
   flex: 0 0 auto;
+  display: block;
 }
 
 .name {
   font-size: 14.5px;
   font-weight: 600;
-  color: #111827;
+  color: var(--text);
   line-height: 1.3;
   display: flex;
   align-items: baseline;
   gap: 6px;
 }
 
+/* 英文副标与觅图主站一致：中文在前，Mito 小字在后 */
+.name small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: .5px;
+}
+
 .ver {
   font-size: 11px;
   font-weight: 400;
-  color: #94a3b8;
+  color: var(--muted);
 }
 
 .status {
@@ -56,9 +88,9 @@ html, body {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border: 0;
-  background: #f1f5f9;
-  color: #475569;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
   border-radius: 999px;
   padding: 2px 9px 2px 7px;
   font-size: 11.5px;
@@ -67,21 +99,21 @@ html, body {
   max-width: 336px;
 }
 
-.status:hover { background: #e6ebf2; }
+.status:hover { border-color: var(--accent); color: var(--text); }
 
 .status .dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #cbd5e1;
+  background: #4a4a55;
   flex: 0 0 auto;
 }
 
-.status.ready { background: #e7f6ef; color: #05603a; }
-.status.ready .dot { background: #0e9f6e; }
+.status.ready { color: var(--ok); border-color: rgba(61, 220, 151, .35); background: rgba(61, 220, 151, .08); }
+.status.ready .dot { background: var(--ok); }
 
-.status.bad { background: #fdecec; color: #9b1c1c; }
-.status.bad .dot { background: #dc2626; }
+.status.bad { color: var(--err); border-color: rgba(255, 107, 107, .35); background: rgba(255, 107, 107, .08); }
+.status.bad .dot { background: var(--err); }
 
 #statusText {
   overflow: hidden;
@@ -106,10 +138,10 @@ html, body {
   justify-content: center;
   gap: 6px;
   height: 88px;
-  border: 1px solid #e3e8ef;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: #fff;
-  color: #334155;
+  background: var(--panel);
+  color: var(--text);
   font-family: inherit;
   font-size: 12.5px;
   cursor: pointer;
@@ -117,11 +149,11 @@ html, body {
   padding: 8px 4px;
 }
 
-.tile:hover { border-color: #bfdbfe; background: #f7fafe; }
+.tile:hover { border-color: var(--accent); background: var(--panel-2); }
 .tile:active { transform: scale(0.985); }
 .tile[disabled] { opacity: 0.55; cursor: default; }
 
-.tile svg { width: 22px; height: 22px; color: #3b82f6; }
+.tile svg { width: 22px; height: 22px; color: var(--accent); }
 .tile span { line-height: 1.2; }
 
 .wide {
@@ -131,19 +163,19 @@ html, body {
   align-items: center;
   justify-content: center;
   gap: 9px;
-  border: 1px solid #e3e8ef;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: #fff;
-  color: #334155;
+  background: var(--panel);
+  color: var(--text);
   font-family: inherit;
   font-size: 13px;
   cursor: pointer;
   transition: border-color 0.12s, background 0.12s, transform 0.08s;
 }
 
-.wide:hover { border-color: #bfdbfe; background: #f7fafe; }
+.wide:hover { border-color: var(--accent); background: var(--panel-2); }
 .wide:active { transform: scale(0.99); }
-.wide svg { width: 20px; height: 20px; color: #3b82f6; }
+.wide svg { width: 20px; height: 20px; color: var(--accent); }
 
 .wide + .wide { margin-top: 9px; }
 
@@ -162,27 +194,27 @@ html, body {
   justify-content: center;
   gap: 7px;
   height: 40px;
-  border: 1px solid #e3e8ef;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #fff;
-  color: #334155;
+  background: var(--panel);
+  color: var(--text);
   font-family: inherit;
   font-size: 12.5px;
   cursor: pointer;
   transition: border-color 0.12s, background 0.12s, transform 0.08s;
 }
 
-.mini:hover { border-color: #bfdbfe; background: #f7fafe; }
+.mini:hover { border-color: var(--accent); background: var(--panel-2); }
 .mini:active { transform: scale(0.99); }
 .mini[disabled] { opacity: 0.55; cursor: default; }
-.mini svg { width: 17px; height: 17px; color: #3b82f6; }
+.mini svg { width: 17px; height: 17px; color: var(--accent); }
 
 kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 10.5px;
-  color: #94a3b8;
-  background: #f8fafc;
-  border: 1px solid #edf1f6;
+  color: var(--muted);
+  background: #191920;
+  border: 1px solid var(--border);
   border-radius: 5px;
   padding: 1px 6px;
   line-height: 1.5;
@@ -198,7 +230,7 @@ kbd {
   gap: 4px;
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid #f1f4f8;
+  border-top: 1px solid var(--border);
 }
 
 .row5 button {
@@ -208,7 +240,7 @@ kbd {
   gap: 5px;
   border: 0;
   background: transparent;
-  color: #64748b;
+  color: var(--muted);
   font-family: inherit;
   font-size: 11px;
   padding: 6px 2px;
@@ -217,7 +249,7 @@ kbd {
   transition: background 0.12s, color 0.12s;
 }
 
-.row5 button:hover { background: #f5f8fc; color: #2563eb; }
+.row5 button:hover { background: var(--panel-2); color: var(--accent); }
 .row5 svg { width: 19px; height: 19px; }
 
 /* ---------- 右键菜单状态 ---------- */
@@ -229,11 +261,11 @@ kbd {
   gap: 8px;
   margin-top: 10px;
   padding: 6px 9px;
-  border: 1px solid #eef2f7;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fafcff;
+  background: var(--panel);
   font-size: 11.5px;
-  color: #64748b;
+  color: var(--muted);
 }
 
 .menu span {
@@ -242,14 +274,14 @@ kbd {
   white-space: nowrap;
 }
 
-.menu.ok { border-color: #d7f0e3; background: #f4fbf8; color: #05603a; }
-.menu.bad { border-color: #f7dede; background: #fdf6f6; color: #9b1c1c; }
+.menu.ok { border-color: rgba(61, 220, 151, .35); background: rgba(61, 220, 151, .08); color: var(--ok); }
+.menu.bad { border-color: rgba(255, 107, 107, .35); background: rgba(255, 107, 107, .08); color: var(--err); }
 
 .menu button {
   flex: 0 0 auto;
-  border: 1px solid #dbe3ec;
-  background: #fff;
-  color: #475569;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
   border-radius: 6px;
   padding: 3px 9px;
   font-family: inherit;
@@ -257,7 +289,7 @@ kbd {
   cursor: pointer;
 }
 
-.menu button:hover { border-color: #bfdbfe; color: #2563eb; }
+.menu button:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ---------- 底部提示 ---------- */
 
@@ -265,22 +297,22 @@ kbd {
   margin-top: 10px;
   text-align: center;
   font-size: 11.5px;
-  color: #94a3b8;
+  color: var(--muted);
   padding-top: 2px;
   min-height: 18px;
 }
 
-.hint.ok { color: #0e9f6e; }
-.hint.err { color: #dc2626; }
+.hint.ok { color: var(--ok); }
+.hint.err { color: var(--err); }
 
 /* 本页脚本与扩展版本不一致时的警告条（刷新扩展后没 F5 的标签页） */
 .stale {
   margin: 10px 0 0;
   padding: 8px 10px;
   border-radius: 8px;
-  background: #fef3c7;
-  border: 1px solid #fcd34d;
-  color: #92400e;
+  background: rgba(240, 192, 64, .1);
+  border: 1px solid rgba(240, 192, 64, .4);
+  color: var(--warn);
   font-size: 11.5px;
   line-height: 1.5;
 }

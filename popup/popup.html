@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>素材采集器</title>
+<title>觅图采集器</title>
 <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -10,9 +10,9 @@
 
   <header class="head">
     <div class="brand">
-      <img class="logo" src="../assets/icons/48.png" alt="">
+      <img class="logo" src="../assets/brand/01-viewfinder-rev.svg" alt="觅图">
       <div>
-        <div class="name">素材采集器 <span class="ver" id="ver">v1.7.4</span></div>
+        <div class="name">觅图采集器 <small>Mito Collector</small> <span class="ver" id="ver">v1.7.5</span></div>
         <button class="status" id="status" title="点击测试连接">
           <i class="dot"></i><span id="statusText">检测中…</span>
         </button>
@@ -86,6 +86,14 @@
       <path d="M4 17.5V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1.5"/>
     </svg>
     <span>采集本页大图（Pinterest 原图）</span>
+  </button>
+
+  <button class="wide" id="huaBanGrab" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3.5v10.5"/><path d="m7.6 9.6 4.4 4.4 4.4-4.4"/>
+      <path d="M4 17.5V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1.5"/>
+    </svg>
+    <span>采集本页大图（花瓣网原图）</span>
   </button>
 
   <div class="row5">

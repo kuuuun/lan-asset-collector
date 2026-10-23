@@ -1,13 +1,17 @@
 /*
- * 素材采集器 · 后台服务（MV3 service worker）
+ * 觅图采集器 · 后台服务（MV3 service worker）
  * 负责：快捷键 / 右键菜单 / 截屏编排 / 整页拼接调度 / 统一落盘
  */
 importScripts('lib/util.js', 'lib/store.js', 'lib/webdav.js', 'lib/saver.js', 'lib/comfy.js');
 
 const CC = self.CC;
 
-const VERSION = '1.7.4';
+const VERSION = '1.7.5';
 const CAPTURE_GAP = 320; // 两次 captureVisibleTab 之间的最小间隔（配额：2 次/秒）
+
+/* 品牌标识：与觅图 Mito 主系统同一套命名与视觉语言 */
+const BRAND = '觅图采集器';
+const BRAND_EN = 'Mito Collector';
 
 /* ================= 平台信息 =================
  * 扩展的核心逻辑与平台无关（截图、抓图、WebDAV、目录授权在 Windows 与 macOS 上
@@ -95,12 +99,12 @@ function installNet() {
     self.addEventListener('unhandledrejection', (e) => {
       try {
         const r = e && e.reason;
-        console.warn('[LAN Collector] 未处理的异步错误：', (r && (r.message || r)) || r);
+        console.warn('[觅图采集器] 未处理的异步错误：', (r && (r.message || r)) || r);
       } catch (_) {}
       if (e && e.preventDefault) e.preventDefault();
     });
     self.addEventListener('error', (e) => {
-      try { console.warn('[LAN Collector] 未捕获错误：', e && e.message); } catch (_) {}
+      try { console.warn('[觅图采集器] 未捕获错误：', e && e.message); } catch (_) {}
     });
   } catch (_) {}
 }
@@ -137,7 +141,7 @@ async function refreshComfyDnr() {
 /* ================= 右键菜单 ================= */
 
 const MENU_ID = 'cc-image';
-const MENU_TITLE = '将图片保存至 LAN Collector';
+const MENU_TITLE = '将图片保存至觅图';
 
 /**
  * 最近一次注册的结果。
@@ -226,7 +230,7 @@ function notify(title, message) {
       chrome.notifications.create('cc-' + CC.uid(), {
         type: 'basic',
         iconUrl: chrome.runtime.getURL('assets/icons/128.png'),
-        title: String(title || '素材采集器').slice(0, 60),
+        title: String(title || BRAND).slice(0, 60),
         message: String(message || '').slice(0, 200),
         silent: true
       })
@@ -253,7 +257,7 @@ function refreshBadge() {
       try {
         silent(
           chrome.action.setTitle({
-            title: t.ready ? `素材采集器 ${VERSION} · ${t.label}` : `素材采集器 ${VERSION} · 未就绪`
+            title: t.ready ? `${BRAND} ${VERSION} · ${t.label}` : `${BRAND} ${VERSION} · 未就绪`
           })
         );
       } catch (_) {}
@@ -1000,6 +1004,51 @@ async function collectPin(tabArg) {
   return res || { ok: false, error: '采集失败' };
 }
 
+/**
+ * 花瓣网大图采集 —— 与 collectPin 完全对齐，只是走 huaban:scan、认花瓣图床。
+ *
+ * 取图策略：内容脚本把页面上的 huaban 缩略图地址（_fw658/format/webp）换算成原图 →
+ * **先按原图抓**；失败（少数情况下原图不存在，会 403 或回落）**再退回页面上那张图**，
+ * 宁可拿到小的也不空手而归。
+ */
+async function collectHuaBan(tabArg) {
+  const tab = tabArg && tabArg.id != null ? tabArg : await activeTab();
+  const bad = guard(tab);
+  if (bad) {
+    notify('无法采集', bad);
+    return { ok: false, error: bad };
+  }
+  if (!(await ensureContent(tab))) {
+    notify('无法采集', '当前页面不允许注入采集器');
+    return { ok: false, error: '当前页面不允许注入采集器' };
+  }
+
+  const scan = await cc(tab.id, { type: 'huaban:scan' });
+  if (!scan || scan.error || (!scan.orig && !scan.url)) {
+    const msg = (scan && scan.error) || '本页没有找到花瓣网图片';
+    notify('没有找到大图', msg);
+    return { ok: false, error: msg };
+  }
+
+  const base = {
+    w: scan.w,
+    h: scan.h,
+    pageTitle: scan.title || (tab && tab.title) || '',
+    sourceUrl: (tab && tab.url) || ''
+  };
+  const attempts = [];
+  if (scan.orig) attempts.push(scan.orig);
+  if (scan.url && scan.url !== scan.orig) attempts.push(scan.url);
+
+  let res = null;
+  for (const url of attempts) {
+    res = await singleSave(tab, Object.assign({ url }, base));
+    if (res && res.ok) break;
+  }
+  reportSave(res, '花瓣网大图');
+  return res || { ok: false, error: '采集失败' };
+}
+
 async function runAction(action, tabArg) {
   const tab = tabArg || (await activeTab());
   switch (action) {
@@ -1092,6 +1141,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // 弹窗触发时 sender.tab 是 undefined（消息来自扩展自身页面）——
       // collectPin 内部会退回 chrome.tabs.query 找活动标签页
       done(collectPin(sender.tab));
+      return true;
+
+    case 'huaban:collect':
+      // 弹窗触发时 sender.tab 是 undefined —— collectHuaBan 内部会退回活动标签页
+      done(collectHuaBan(sender.tab));
       return true;
 
     case 'copy:page':

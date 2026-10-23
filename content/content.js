@@ -1,5 +1,5 @@
 /*
- * 素材采集器 · 内容脚本
+ * 觅图采集器 · 内容脚本
  * 负责：区域选择遮罩 / Alt+右键 / 批量采集面板 / 整页截图度量与拼接 / 页内提示
  */
 (function () {
@@ -16,6 +16,8 @@
     altRightClick: true,
     pinSaveMirror: false,
     pinMirrorDebug: false,
+    huaBanSaveMirror: false,
+    huaBanMirrorDebug: false,
     minSize: 120,
     toastInPage: true,
     format: 'png',
@@ -765,6 +767,49 @@
     };
   }
 
+  /**
+   * 扫出页面上的花瓣网图片候选（与 pinCandidates 同思路，但认 huaban 的图床）。
+   * 同样不猜「当前是哪一个 pin」—— 瀑布流里最大的一张缩略图所对应的原图就是同一张原图。
+   */
+  function huabanCandidates() {
+    const out = [];
+    const seen = new Set();
+    const push = (url, w, h, front) => {
+      const u = String(url || '').trim().split(/\s+/)[0];
+      if (!CC.huabanOriginal(u)) return; // 只认花瓣图床、且能解析出原图 key 的
+      if (seen.has(u)) return;
+      seen.add(u);
+      out.push({ url: u, w: Number(w) || 0, h: Number(h) || 0, front: !!front });
+    };
+    const imgs = document.querySelectorAll('img');
+    for (const img of imgs) {
+      const nat = (img.naturalWidth || 0) * (img.naturalHeight || 0);
+      push(img.currentSrc || img.src || '', img.naturalWidth, img.naturalHeight, isVisible(img) && nat > 100000);
+      const ss = img.getAttribute && img.getAttribute('srcset');
+      if (ss) for (const part of String(ss).split(',')) push(part, 0, 0, false);
+      const orig = img.getAttribute && img.getAttribute('data-orig-img');
+      if (orig) push(orig, 0, 0, false);
+    }
+    return out;
+  }
+
+  function huabanScan() {
+    const cands = huabanCandidates();
+    if (!cands.length) return { error: '本页没有找到花瓣网图片' };
+    const withArea = cands.filter((c) => c.w * c.h > 0);
+    const pool = withArea.length ? withArea : cands;
+    const best = pool.slice().sort((a, b) => (b.front - a.front) || (b.w * b.h - a.w * a.h))[0];
+    const h1 = document.querySelector('h1');
+    return {
+      ok: true,
+      url: best.url,
+      orig: CC.huabanOriginal(best.url) || '', // 与 Pinterest 一致：优先给原图，拿不到时回退 url
+      w: best.w,
+      h: best.h,
+      title: (h1 && h1.textContent) || document.title || ''
+    };
+  }
+
   /* ================= 大图推断 ================= */
 
   /** 解析 srcset，按分辨率描述符从大到小返回候选地址（同一张图的不同尺寸） */
@@ -812,7 +857,7 @@
 
     // ① CDN 路径规则能逆推原图 —— 最可靠，优先
     for (const u of cands) {
-      const orig = CC.pinimgOriginal(u);
+      const orig = CC.pinimgOriginal(u) || CC.huabanOriginal(u);
       if (orig) return { url: orig, alt: page || u };
     }
     // ② 站点自己声明的大图属性
@@ -1103,6 +1148,133 @@
 
   /* ================= 消息处理 ================= */
 
+  /* ================= 花瓣网「采集」镜像 =================
+   *
+   * 与 Pinterest 保存镜像完全对齐的一套：你在 huaban.com 点自己的「采集」时，扩展
+   * 顺手把这张图（去掉 CDN 的 _fw 尺寸段、换算成原图）也存一份到本地素材库。
+   *
+   * 三条纪律（与 Pinterest 一致）：
+   *   ① 绝不动事件（不 preventDefault / 不 stopPropagation）—— 花瓣自己的采集必须照原样发生
+   *   ② 认按钮的**可访问名**，不认 class —— class 是混淆的，每次发版都变
+   *   ③ 认不出来就安静 —— 这功能是白捡的，不该在页面上乱弹提示
+   */
+
+  const ON_HUABAN = CC.isHuabanUrl(location.href);
+
+  /** 点击点上「像采集按钮」的那个元素：aria-label / title / 文字 三选一，外加尺寸上限（与 saveButtonAt 同框） */
+  function huabanCollectButtonAt(x, y) {
+    const stack = (document.elementsFromPoint && document.elementsFromPoint(x, y)) || [];
+    const fits = (el) => {
+      if (!el || el.nodeType !== 1 || !el.getBoundingClientRect) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width < 8 || r.height < 8 || r.width > 360 || r.height > 140) return false;
+      return (
+        CC.huabanCollectLabel(el.getAttribute && el.getAttribute('aria-label')) ||
+        CC.huabanCollectLabel(el.getAttribute && el.getAttribute('title')) ||
+        CC.huabanCollectLabel(el.textContent)
+      );
+    };
+    for (const el of stack) {
+      if (fits(el)) return el;
+      if (el && fits(el.parentElement)) return el.parentElement;
+    }
+    return null;
+  }
+
+  /**
+   * 这颗「采集」按钮管的是哪张图（与 pinImageFor 同思路，但只认花瓣图床）。
+   */
+  function huabanImageFor(btn, x, y) {
+    let box = btn;
+    for (let i = 0; i < 14 && box; i++) {
+      const imgs = box.querySelectorAll ? box.querySelectorAll('img') : [];
+      let best = null;
+      let bestScore = 0;
+      for (const im of imgs) {
+        const u = String(im.currentSrc || im.src || '');
+        if (!CC.huabanOriginal(u)) continue; // 只认花瓣图床
+        const r = im.getBoundingClientRect();
+        const dx = x >= r.left && x <= r.right ? 0 : Math.min(Math.abs(x - r.left), Math.abs(x - r.right));
+        const dy = y >= r.top && y <= r.bottom ? 0 : Math.min(Math.abs(y - r.top), Math.abs(y - r.bottom));
+        const dist = Math.hypot(dx, dy);
+        if (dist > 900) continue;
+        const area = (im.naturalWidth || r.width) * (im.naturalHeight || r.height);
+        const score = area / (1 + dist / 120);
+        if (score > bestScore) {
+          bestScore = score;
+          best = im;
+        }
+      }
+      if (best) return best;
+      box = box.parentElement;
+    }
+    return imageUnderPoint(null, x, y);
+  }
+
+  /* 一次采集可能触发多个 click（按钮里套按钮、Vue 重渲染）→ 同一张图 2.5 秒内只做一次 */
+  let lastHuaBanMirror = { url: '', at: 0 };
+
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (!ON_HUABAN) return;
+      const dbg = !!settings.huaBanMirrorDebug;
+      if (!settings.huaBanSaveMirror) {
+        if (dbg) toast('采集镜像：开关没打开（设置 → 采集行为）', 'err', 5000, true);
+        return;
+      }
+      if (e.button !== 0) return;
+      const btn = huabanCollectButtonAt(e.clientX, e.clientY);
+      if (!btn) {
+        if (dbg) {
+          toast('采集镜像：没认出「采集」按钮 · 落点上是 ' + describePoint(e.clientX, e.clientY), 'err', 9000, true);
+        }
+        return;
+      }
+      const img = huabanImageFor(btn, e.clientX, e.clientY);
+      if (!img) {
+        if (dbg) toast('采集镜像：认出按钮「' + nameOf(btn).slice(0, 12) + '」但没找到对应的图', 'err', 9000, true);
+        recordErr('hb:no-image', '点到了采集按钮，但附近没找到对应的图片', { page: location.href });
+        return;
+      }
+      const pick = bigSourceOf(img);
+      if (!pick || !pick.url) {
+        if (dbg) toast('采集镜像：图找到了，但读不到它的地址', 'err', 9000, true);
+        recordErr('hb:no-url', '读不到这张图的地址', { page: location.href });
+        return;
+      }
+      const now = Date.now();
+      if (pick.url === lastHuaBanMirror.url && now - lastHuaBanMirror.at < 2500) return;
+      lastHuaBanMirror = { url: pick.url, at: now };
+      if (dbg) {
+        toast('采集镜像：命中「' + nameOf(btn).slice(0, 10) + '」→ ' + pick.url.slice(-28), '', 3500, true);
+      }
+
+      const alt = pick.alt && pick.alt !== pick.url ? pick.alt : '';
+      bg({
+        type: 'single:save',
+        url: pick.url,
+        fallbackUrl: alt,
+        w: img.naturalWidth,
+        h: img.naturalHeight,
+        pageTitle: document.title,
+        sourceUrl: location.href
+      }).then((res) => {
+        if (res && res.ok) {
+          if (!res.duplicated) {
+            const tag = res.downgraded && res.sizeTag ? '（原图缺失，存的是 ' + res.sizeTag + '）' : '';
+            toast('已顺手存一份到素材库' + tag, tag ? '' : 'ok', tag ? 4200 : 2200);
+          }
+          return;
+        }
+        const why = String((res && (res.error || res.message)) || '未知错误');
+        recordErr('hb:save', why, { url: pick.url, page: location.href });
+        toast('顺手存本地失败：' + why, 'err', res && res.stale ? 6000 : 3200, !!(res && res.stale));
+      });
+    },
+    true
+  );
+
   /** blob → dataURL。blob: 地址只存在于页面作用域，service worker 拿不到，只能这里读 */
   function blobToDataUrl(blob) {
     return new Promise((resolve, reject) => {
@@ -1132,7 +1304,7 @@
   async function handle(msg) {
     switch (msg.type) {
       case 'cc:ping':
-        return { ok: true, version: '1.7.4' };
+        return { ok: true, version: '1.7.5' };
 
       case 'cc:toast':
         toast(msg.text || '', msg.kind || '', msg.ms);
@@ -1175,6 +1347,9 @@
 
       case 'pin:scan':
         return pinScan();
+
+      case 'huaban:scan':
+        return huabanScan();
 
       case 'cc:image:largest':
         return largestImage();

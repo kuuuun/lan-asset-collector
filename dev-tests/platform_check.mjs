@@ -434,7 +434,7 @@ if (typeof bgSandbox.buildMenus === 'function') {
   const m = createdMenus[0] || {};
   check('菜单项为顶层（无 parentId，不会被折叠成二级菜单）', !m.parentId, String(m.parentId));
   check("菜单项只在图片上下文出现", Array.isArray(m.contexts) && m.contexts.length === 1 && m.contexts[0] === 'image', JSON.stringify(m.contexts));
-  check('菜单项标题与名称一致', m.title === '将图片保存至 LAN Collector', String(m.title));
+  check('菜单项标题与名称一致', m.title === '将图片保存至觅图', String(m.title));
 } else {
   check('background.js 暴露 buildMenus', false, '未找到 buildMenus');
 }
@@ -830,9 +830,18 @@ if (decoded['128']) {
 }
 
 if (decoded['32'] && decoded['128']) {
-  // 小尺寸是单独渲染的：放粗笔画、并省掉卡片内部的山与太阳。
-  // 取绘制坐标系里同一个点 (0.60, 0.70) —— 128 上它落在山里（镂空，非白），
-  // 32 上应该还是一张实心白卡。
+  /**
+   * 图形是觅图主站的「取景框」：四个圆角 L 形角标 + 一圈对焦环 + 中心实心点，
+   * 底色是觅图 brand ink #14171C，标记 #FFFFFF。
+   *
+   * 几何（tools/make_icons.py，单位坐标系 0..120）：
+   *   PAD = 21      → 角标起点在 21/120 = 0.175
+   *   RING_R = 20   → 对焦环半径 20/120 ≈ 0.1667，环顶在 0.5 - 0.1667 = 0.3333
+   *   中心点        → (0.5, 0.5)
+   *
+   * 小尺寸单独渲染：16px 省略对焦环（PRESETS 里 ring_sw=0），否则会粘连成一团。
+   * 所以断言查「角标在不在」「环在不在」「中心点在不在」，而不是查某个点的颜色。
+   */
   const at = (img, u, v) => {
     const x = Math.floor(u * img.w);
     const y = Math.floor(v * img.h);
@@ -840,10 +849,23 @@ if (decoded['32'] && decoded['128']) {
     return [img.px[o], img.px[o + 1], img.px[o + 2], img.px[o + 3]];
   };
   const isWhite = (c) => c[0] > 230 && c[1] > 230 && c[2] > 230 && c[3] > 200;
-  const big = at(decoded['128'], 0.6, 0.7);
-  const small = at(decoded['32'], 0.6, 0.7);
-  check('128 图标卡片内部有镂空的山（非纯白）', !isWhite(big), JSON.stringify(big));
-  check('32 图标卡片内部为实心白（小尺寸省略细节）', isWhite(small), JSON.stringify(small));
+  const isInk = (c) => c[0] < 90 && c[1] < 90 && c[2] < 90 && c[3] > 200;
+
+  for (const size of ['16', '32', '48', '128']) {
+    const img = decoded[size];
+    if (!img) continue;
+    const corner = at(img, 0.5, 0.175);      // 上方角标横臂
+    const dot = at(img, 0.5, 0.5);           // 中心点
+    const ring = at(img, 0.5, 0.3333);       // 对焦环顶
+    check(`${size} 图标：角标是白的`, isWhite(corner), JSON.stringify(corner));
+    check(`${size} 图标：中心点是白的`, isWhite(dot), JSON.stringify(dot));
+    if (size === '16') {
+      // 16px 省略对焦环 —— 那个位置必须是底色，否则说明小尺寸又画糊了
+      check('16 图标：小尺寸省略对焦环（该处应为墨色底）', isInk(ring), JSON.stringify(ring));
+    } else {
+      check(`${size} 图标：有对焦环`, isWhite(ring), JSON.stringify(ring));
+    }
+  }
 
   const a = fs.readFileSync(path.join(root, iconDecl['16']));
   const b = fs.readFileSync(path.join(root, iconDecl['128']));
@@ -1122,6 +1144,121 @@ check(
 check(
   '域名判定只有一份实现（弹窗不再自己写正则）',
   !/const PIN_HOST/.test(read('popup/popup.js')) && /lib\/util\.js/.test(read('popup/popup.html'))
+);
+
+/* ---- v1.7.5：在花瓣网点「采集」时顺手存一份到本地（与 Pinterest 保存镜像同设计） ---- */
+section('H. v1.7.5 花瓣网采集镜像');
+
+check(
+  '能从地址认出花瓣主域',
+  CC.isHuabanUrl('https://www.huaban.com/pins/123/') && CC.isHuabanUrl('https://huaban.com/'),
+  String(CC.isHuabanUrl('https://www.huaban.com/pins/123/'))
+);
+check(
+  '仿冒域名不算花瓣',
+  !CC.isHuabanUrl('https://huaban.com.evil.com/x') &&
+    !CC.isHuabanUrl('https://nothuaban.com/') &&
+    !CC.isHuabanUrl('https://evil.com/?u=huaban.com')
+);
+check('空值与垃圾输入不抛异常', CC.isHuabanUrl('') === false && CC.isHuabanUrl('not a url') === false);
+
+check(
+  'huabanOriginal 把 _fw 尺寸段 / format/webp 去掉得原图',
+  CC.huabanOriginal('https://hbimg.huabanimg.com/abc123-def456_fw658/format/webp') ===
+    'https://hbimg.huabanimg.com/abc123-def456',
+  CC.huabanOriginal('https://hbimg.huabanimg.com/abc123-def456_fw658/format/webp')
+);
+check(
+  'huabanOriginal 已是原图时幂等',
+  CC.huabanOriginal('https://hbimg.huabanimg.com/abc123-def456') === 'https://hbimg.huabanimg.com/abc123-def456'
+);
+check(
+  'huabanOriginal 对其他尺寸段（_fw236/_fw1200）同样生效',
+  ['_fw236', '_fw1200'].every(
+    (s) =>
+      CC.huabanOriginal(`https://hbimg.huabanimg.com/abc123-def456${s}/format/webp`) ===
+      'https://hbimg.huabanimg.com/abc123-def456'
+  )
+);
+check(
+  'huabanOriginal 对非 huaban 域名 / 空值返回空串（可当判据用）',
+  CC.huabanOriginal('https://example.com/abc_fw658/format/webp') === '' &&
+    CC.huabanOriginal('') === '' &&
+    CC.huabanOriginal('not-a-url') === ''
+);
+check(
+  'huabanOriginal 不被仿冒域名骗过（hbimg.huabanimg.com.evil.com）',
+  CC.huabanOriginal('https://hbimg.huabanimg.com.evil.com/abc123-def456_fw658/format/webp') === ''
+);
+
+check(
+  '认中文采集按钮',
+  CC.huabanCollectLabel('采集') && CC.huabanCollectLabel('采集图片') && CC.huabanCollectLabel('采集到画板')
+);
+check(
+  '取消采集 / 已采集 一律不算',
+  !CC.huabanCollectLabel('取消采集') && !CC.huabanCollectLabel('已采集')
+);
+check(
+  '段落里的「采集」不当按钮（长度上限）',
+  !CC.huabanCollectLabel('这张图片的采集状态会随着你选择的画板而变化，请先在上方选择你要采集到的画板再来点采集按钮')
+);
+
+// 镜像代码块：既不打断花瓣的采集，也不能自己重复触发
+const hbMirrorSec = contentSrc.slice(
+  contentSrc.indexOf('花瓣网「采集」镜像'),
+  contentSrc.indexOf('blob → dataURL')
+);
+check('内容脚本里有花瓣采集镜像的入口', hbMirrorSec.length > 500 && /lastHuaBanMirror/.test(hbMirrorSec));
+check(
+  '镜像绝不 preventDefault / stopPropagation',
+  !/\.(?:preventDefault|stopPropagation)\s*\(/.test(stripComments(hbMirrorSec))
+);
+check('同一张图 2.5 秒内只镜像一次', /2500/.test(hbMirrorSec));
+check('镜像复用 single:save（与 Pinterest 同一落盘链路）', /type: 'single:save'/.test(hbMirrorSec));
+check('镜像取的是大图（走 bigSourceOf）', /bigSourceOf\(img\)/.test(hbMirrorSec));
+check('只在花瓣网站点生效', /ON_HUABAN/.test(hbMirrorSec) && /CC\.isHuabanUrl\(location\.href\)/.test(hbMirrorSec));
+check('镜像认的是「采集」按钮', /huabanCollectLabel/.test(hbMirrorSec) && /huabanCollectButtonAt/.test(hbMirrorSec));
+
+check('默认关闭（不擅自往 NAS 写）', /huaBanSaveMirror: false/.test(storeSrc), 'store.js 的默认值');
+check('内容脚本的兜底设置也有这个开关', /huaBanSaveMirror: false/.test(contentSrc));
+check(
+  '设置页有开关并接线',
+  /id="huaBanSaveMirror"/.test(read('options/options.html')) && /huaBanSaveMirror/.test(read('options/options.js'))
+);
+check(
+  '诊断模式默认关闭，且设置页能开',
+  /huaBanMirrorDebug: false/.test(storeSrc) &&
+    /id="huaBanMirrorDebug"/.test(read('options/options.html')) &&
+    /huaBanMirrorDebug/.test(read('options/options.js'))
+);
+check(
+  '诊断会把落点上的元素摊开（与 Pinterest 共用 describePoint / nameOf）',
+  /describePoint\(/.test(hbMirrorSec) && /elementsFromPoint/.test(hbMirrorSec) && /nameOf\(/.test(hbMirrorSec)
+);
+check(
+  '诊断覆盖三种断点：开关没开 / 没认出按钮 / 认出了找不到图',
+  (hbMirrorSec.match(/if \(dbg\)/g) || []).length >= 3
+);
+check(
+  '弹窗把镜像开关的真实存储值显示出来',
+  /huaBanSaveMirror/.test(read('popup/popup.js')) && /SETTINGS_KEY/.test(read('popup/popup.js'))
+);
+check(
+  '弹窗有花瓣网大图入口并保持隐藏（非花瓣页上）',
+  /id="huaBanGrab"/.test(read('popup/popup.html')) && /huaBanGrab/.test(read('popup/popup.js')) && /hidden/.test(read('popup/popup.html'))
+);
+check(
+  'bigSourceOf 也认 huaban 原图（pinimg 与 huaban 共用一条逆推）',
+  /CC\.pinimgOriginal\(u\) \|\| CC\.huabanOriginal\(u\)/.test(contentSrc)
+);
+check(
+  '后台有 collectHuaBan 与 huaban:collect 分支',
+  /async function collectHuaBan/.test(read('background.js')) && /case 'huaban:collect'/.test(read('background.js'))
+);
+check(
+  '内容脚本有 huaban:scan 分支',
+  /case 'huaban:scan'/.test(contentSrc) && /huabanScan\(\)/.test(contentSrc)
 );
 
 /* ---- v1.7.2：「保存目标未就绪」时状态条必须是一条去设置页的路 ---- */
