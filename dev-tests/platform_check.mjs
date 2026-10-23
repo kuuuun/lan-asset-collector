@@ -1280,6 +1280,79 @@ check(
     /不要用「移除」来更新版本/.test(read('help/help.html'))
 );
 
+/* ========================================================================== *
+ * I. 代码审查修复（2026-10-23）：DNR 发起方 / 高 DPI 拼接 / 去重统计 / 透明底
+ * ========================================================================== */
+
+section('I. 审查修复：DNR 发起方限制');
+
+// 【P0】DNR 规则若不限定发起方，会连网页发起的请求一起改写 ——
+// 等于替所有网页拆掉了 ComfyUI 的同源校验。真实 Edge 实测确认过。
+check(
+  'DNR 规则限定了发起方（initiatorDomains 只含本扩展 ID）',
+  /initiatorDomains:\s*\[chrome\.runtime\.id\]/.test(read('background.js')),
+  'background.js 的 ensureComfyDnr 缺少 initiatorDomains'
+);
+check(
+  'DNR 规则没有被改成更宽的条件（仍只对配置的那个地址生效）',
+  /urlFilter:\s*'\|\s*'\s*\+\s*base\s*\+\s*'\/'/.test(read('background.js')) &&
+    /resourceTypes:\s*\['xmlhttprequest'\]/.test(read('background.js'))
+);
+// 文档里那句「网页偷偷发请求 ComfyUI 照样挡着」在修复前是错的，要一并改掉
+check(
+  '文档不再声称「网页偷偷发请求 ComfyUI 照样挡着」',
+  !/网页偷偷往\s*`?127\.0\.0\.1:8188`?\s*发请求这条路，ComfyUI 照样挡着/.test(read('README.md')),
+  'README v1.6.5 段落与实测不符'
+);
+
+section('I. 审查修复：高 DPI 整页拼接');
+
+// 【P0】captureVisibleTab 在 Retina 上返回**设备像素**，而 shot.y 与页面尺寸是 CSS 像素。
+// 早前直接用 img.naturalHeight 当切片高度 → 高 DPI 屏上纵向拉伸且相邻切片错位。
+check(
+  '拼接时按视口（CSS px）算切片高度，而不是用切片的设备像素高度',
+  /meta\.viewport/.test(read('lib/imageproc.js')) &&
+    /sliceCssH/.test(read('lib/imageproc.js')) &&
+    !/Math\.round\(img\.naturalHeight \* s\)/.test(read('lib/imageproc.js')),
+  'lib/imageproc.js 的 stitchDataUrl 仍在用设备像素高度'
+);
+check(
+  '切片的缩放系数由宽度推出（纵横比一致，不会被压扁）',
+  /W\s*\/\s*img\.naturalWidth|sliceCssH\s*\*\s*kCss/.test(read('lib/imageproc.js'))
+);
+check(
+  '后台把 viewport 一起传给拼接',
+  /meta:\s*\{\s*width:\s*meta\.width,\s*height,\s*viewport,\s*dpr\s*\}/.test(read('background.js')),
+  'background.js 的 cc:fullpage:stitch 少了 viewport'
+);
+
+section('I. 审查修复：去重统计与透明底');
+
+// 【P1】重复命中时早前直接 return，走不到 bumpStats → 「重复跳过 N」永远是 0
+check(
+  '重复跳过会记入统计（在 return 之前 bumpStats）',
+  /skipped:\s*1[\s\S]{0,120}duplicated:\s*true/.test(read('lib/saver.js')) ||
+    /bumpStats\(\{\s*skipped:\s*1\s*\}\)[^\n]*\n[\s\S]{0,120}duplicated:\s*true/.test(read('lib/saver.js')),
+  'lib/saver.js 的重复分支没有 bumpStats'
+);
+
+// 【P1】JPEG 没有 alpha，PNG 透明区直接转 JPEG 会变纯黑
+check(
+  '缩略图转 JPEG 前先铺白底',
+  /fillStyle\s*=\s*'#ffffff'[\s\S]{0,120}fillRect/.test(read('offscreen.js')),
+  'offscreen.js 的 makeThumb 没有填白底'
+);
+
+section('I. 审查修复：权限暴露面');
+
+// 仓库里没有任何一处以 URL 形式引用 assets/ 或 content/（全是相对路径或 scripting 注入），
+// 所以不必把它们开放给 <all_urls>
+check(
+  'manifest 不再把内部资源开放给所有网页（web_accessible_resources 已收敛）',
+  !/web_accessible_resources/.test(read('manifest.json')),
+  'manifest.json 仍声明了 web_accessible_resources'
+);
+
 /* ========================================================================== */
 
 console.log(`\n${'='.repeat(52)}`);

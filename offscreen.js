@@ -68,6 +68,11 @@ async function makeThumb(dataUrl, max, quality) {
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('无法创建画布');
   ctx.imageSmoothingQuality = 'high';
+  // 先铺白底再画图：JPEG 没有 alpha 通道，PNG 的透明区域直接转 JPEG 会变成纯黑
+  // （实测透明像素变成 [0,0,0]），工作台里带透明的素材就会出现一块黑底。
+  // 与 lib/imageproc.js 的 convertDataUrl 保持同一套处理。
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
   ctx.drawImage(img, 0, 0, w, h);
   const q = Math.max(0.4, Math.min(0.98, Number(quality) || 0.82));
   return {

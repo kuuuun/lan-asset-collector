@@ -440,6 +440,13 @@ async function captureFullPage(tab) {
   const fullHeight = Math.round(meta.height);
   const height = Math.min(fullHeight, Math.max(600, Number(settings.fullPageMaxHeight) || 20000));
   const viewport = Math.max(200, Math.round(meta.viewport));
+  /**
+   * 输出倍率：1 = 按 CSS 分辨率输出；设备像素比 = 按设备分辨率输出（体积更大）。
+   *
+   * 注意 captureVisibleTab 返回的**始终是设备像素**（Retina 上是 CSS 的 2 倍），
+   * 与这里选的输出倍率无关 —— 两者由 lib/imageproc.js 的 stitchDataUrl 负责换算。
+   * 早前这里直接用 1 而切片却是设备像素，导致高 DPI 屏上整页图纵向拉伸错位。
+   */
   const dpr = settings.fullPageDeviceScale ? meta.dpr || 1 : 1;
 
   const positions = [];
@@ -474,7 +481,7 @@ async function captureFullPage(tab) {
     const stitched = await cc(tab.id, {
       type: 'cc:fullpage:stitch',
       shots,
-      meta: { width: meta.width, height, dpr },
+      meta: { width: meta.width, height, viewport, dpr },
       opts: shotOpts(settings)
     });
     if (!stitched || !stitched.dataUrl) throw new Error('拼接失败');
@@ -850,10 +857,19 @@ async function libThumb(url) {
  * 现象就是 GET /system_stats 正常（GET 不带 Origin），一上传就「HTTP 403」。
  *
  * 用 declarativeNetRequest 只对**用户配置的那个 ComfyUI 地址**改写这两个头：
- *   - 网页偷偷 POST 到 127.0.0.1:8188 时走的是网页自己的 origin，不受这条影响
- *     （ComfyUI 那道防护对网页依然有效，我们只放行本扩展的请求）
  *   - 地址不是回环（家里连单位电脑的 10.x / 100.x）时 ComfyUI 根本不查这件事，
  *     所以把规则撤掉，不留无用的改写
+ *
+ * ⚠️ 规则必须限定「发起方」，否则等于替所有网页拆掉了 ComfyUI 的同源校验：
+ *   condition 里若不写 initiatorDomains，按 Chrome 文档这条规则会匹配**所有网域**
+ *   发起的请求 —— 实测（Edge 152）任意网页发往该地址的 XHR，Origin 都会被改成
+ *   ComfyUI 的地址、Sec-Fetch-Site 被改成 same-origin，ComfyUI 那道 403 直接失效。
+ *
+ *   两个可选写法（都实测有效）：
+ *     · tabIds: [chrome.tabs.TAB_ID_NONE] —— 只匹配「不源自标签页」的请求，
+ *       即后台 service worker 自己发的那批；网页请求都源自某个标签页，不匹配。
+ *     · initiatorDomains: [chrome.runtime.id] —— 只匹配本扩展发起的请求。
+ *   这里用后者：语义更直白（"只放行我自己"），且不受请求是否发生在标签页里影响。
  */
 const COMFY_DNR_ID = 9001;
 
@@ -884,7 +900,12 @@ async function ensureComfyDnr(cfg) {
               { header: 'Sec-Fetch-Site', operation: 'set', value: 'same-origin' },
             ],
           },
-          condition: { urlFilter: '|' + base + '/', resourceTypes: ['xmlhttprequest'] },
+          condition: {
+            urlFilter: '|' + base + '/',
+            resourceTypes: ['xmlhttprequest'],
+            // 只放行本扩展自己发起的请求（见上方注释：缺这一条会连网页一起放行）
+            initiatorDomains: [chrome.runtime.id],
+          },
         },
       ],
     });
